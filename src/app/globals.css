@@ -1,0 +1,44 @@
+@import "tailwindcss";
+
+:root {
+  --background: #f0f4f0; /* very light forest green tint */
+  --foreground: #064e3b; /* emerald-900 */
+  --primary: #059669; /* emerald-600 */
+  --primary-foreground: #ffffff;
+  --secondary: #4b5563; /* slate-600 */
+  --border: #d1fae5; /* emerald-100 */
+  --card: #ffffff;
+  --accent: #d97706; /* amber-600 for attention/buttons */
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-border: var(--border);
+  --color-card: var(--card);
+  --color-accent: var(--accent);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #022c22; /* emerald-950 */
+    --foreground: #ecfdf5; /* emerald-50 */
+    --primary: #10b981; /* emerald-500 */
+    --primary-foreground: #ffffff;
+    --secondary: #94a3b8; /* slate-400 */
+    --border: #064e3b; /* emerald-900 */
+    --card: #064e3b; /* emerald-900 */
+    --accent: #fbbf24; /* amber-400 */
+  }
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+}
