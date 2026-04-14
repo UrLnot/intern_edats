@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "powershell -Command \"Write-Host '--- Network Access ---'; Write-Host ('Access the app on other devices using: http://' + ((Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.InterfaceAlias -notmatch 'Loopback' -and $_.InterfaceAlias -notmatch 'vEthernet' }).IPAddress[0]) + ':3000'); Write-Host '----------------------'; next dev --hostname 0.0.0.0\"",
+    "dev": "powershell -Command \"Write-Host '--- Network Access ---'; Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.InterfaceAlias -notmatch 'Loopback' -and $_.InterfaceAlias -notmatch 'vEthernet' } | ForEach-Object { Write-Host ('Access the app on ' + $_.InterfaceAlias + ': http://' + $_.IPAddress + ':3000') }; Write-Host '----------------------'; next dev --hostname 0.0.0.0\"",
     "build": "next build",
     "start": "next start",
     "lint": "eslint"
