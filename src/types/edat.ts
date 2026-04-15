@@ -3,6 +3,7 @@ export interface EDATEntry {
   trackingNumber: string;
   edatsNumber: string;
   status: string;
+  timeSent: string;
   dateSent: string; // ISO string or Date string
   sender: string;
   subject: string;
@@ -10,5 +11,6 @@ export interface EDATEntry {
   actionTaken: string;
   receiver: string;
   actionTakenReceiver: string;
+  timeReceived: string;
   dateReceived: string; // ISO string or Date string
 }

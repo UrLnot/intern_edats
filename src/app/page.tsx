@@ -5,7 +5,10 @@ import { useRouter } from 'next/navigation';
 import { EDATEntry } from '@/types/edat';
 import EDATTable from '@/components/EDATTable';
 import EDATModal from '@/components/EDATModal';
+import EDATViewModal from '@/components/EDATViewModal';
 import SearchInput from '@/components/SearchInput';
+import ThemeToggle from '@/components/ThemeToggle';
+import { useThemeValue } from '@/components/ThemeProvider';
 import { LogOut, Plus, Trees } from 'lucide-react';
 
 export default function Home() {
@@ -13,10 +16,32 @@ export default function Home() {
   const [entries, setEntries] = useState<EDATEntry[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isViewModalOpen, setIsViewModalOpen] = useState(false);
   const [editingEntry, setEditingEntry] = useState<EDATEntry | null>(null);
+  const [viewingEntry, setViewingEntry] = useState<EDATEntry | null>(null);
   const [isLoaded, setIsLoaded] = useState(false);
+  const [currentTime, setCurrentTime] = useState(new Date());
+  const { theme } = useThemeValue();
 
-  // Fetch from API on mount
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentTime(new Date());
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const formattedDate = currentTime.toLocaleDateString('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+  const formattedTime = currentTime.toLocaleTimeString('en-US', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+
   useEffect(() => {
     const fetchEntries = async () => {
       try {
@@ -40,7 +65,7 @@ export default function Home() {
   const filteredEntries = useMemo(() => {
     if (!searchQuery.trim()) return entries;
     const query = searchQuery.toLowerCase();
-    return entries.filter((entry) => 
+    return entries.filter((entry) =>
       entry.trackingNumber.toLowerCase().includes(query) ||
       entry.edatsNumber.toLowerCase().includes(query) ||
       entry.sender.toLowerCase().includes(query) ||
@@ -52,7 +77,6 @@ export default function Home() {
   const handleAddEntry = async (newEntry: Omit<EDATEntry, 'id'> & { id?: string }) => {
     try {
       if (newEntry.id) {
-        // Update existing via API
         const response = await fetch(`/api/edats/${newEntry.id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
@@ -63,7 +87,6 @@ export default function Home() {
           setEntries(prev => prev.map(e => e.id === updated.id ? updated : e));
         }
       } else {
-        // Add new via API
         const response = await fetch('/api/edats', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -83,6 +106,11 @@ export default function Home() {
   const handleEdit = (entry: EDATEntry) => {
     setEditingEntry(entry);
     setIsModalOpen(true);
+  };
+
+  const handleView = (entry: EDATEntry) => {
+    setViewingEntry(entry);
+    setIsViewModalOpen(true);
   };
 
   const handleDelete = async (id: string) => {
@@ -118,72 +146,84 @@ export default function Home() {
   if (!isLoaded) return null;
 
   return (
-    <main className="min-h-screen flex flex-col bg-emerald-50/50 dark:bg-emerald-950/20">
-      {/* Top Banner / Branding */}
-      <div className="bg-emerald-900 text-white py-1 px-4 text-[10px] uppercase tracking-widest font-bold flex justify-center items-center gap-2 shrink-0">
-        <span className="opacity-80">DENR-CAR</span>
-        <span className="w-1 h-1 bg-white rounded-full opacity-50"></span>
-        <span>Planning and Management Division</span>
+    <main className={`min-h-screen flex flex-col ${theme === 'dark' ? 'dark' : ''}`}>
+      <div className="bg-emerald-900 dark:bg-emerald-950 text-white py-2 px-4 text-xs sm:text-sm uppercase tracking-widest font-bold flex justify-between items-center shrink-0 border-b border-emerald-200 dark:border-emerald-800">
+        <span className="hidden sm:block">Planning and Management Division</span>
+        <span className="sm:hidden text-[10px]">PMD</span>
+        <div className="flex items-center gap-3 font-mono text-[10px] sm:text-xs">
+          <span>{formattedDate}</span>
+          <span className="text-emerald-300">{formattedTime}</span>
+        </div>
       </div>
 
-      <div className="flex-1 max-w-7xl mx-auto px-4 py-4 w-full">
+      <div className="flex-1 max-w-[1800px] mx-auto px-2 sm:px-4 py-4 w-full">
         <header className="mb-4">
-          <div className="flex items-end justify-between pb-4 border-b border-emerald-200 dark:border-emerald-800">
-            <div className="flex items-center gap-4">
-              <div className="p-2 bg-emerald-700 rounded-xl text-white shadow-lg shadow-emerald-900/20">
-                <Trees size={24} />
+          <div className="flex items-center justify-between pb-4 border-b border-emerald-200 dark:border-emerald-800">
+            <div className="flex items-center gap-2 sm:gap-3">
+              <div className="p-1.5 sm:p-2 bg-emerald-700 dark:bg-emerald-800 rounded-lg sm:rounded-xl text-white">
+                <Trees size={20} className="sm:w-6 sm:h-6" />
               </div>
               <div>
-                <h1 className="text-2xl font-extrabold text-emerald-900 dark:text-emerald-50 tracking-tight">eDTs</h1>
-                <p className="text-[10px] font-medium text-emerald-600 dark:text-emerald-400 uppercase tracking-wider">Internal Document Tracking System</p>
+                <h1 className="text-xl sm:text-3xl font-extrabold text-emerald-900 dark:text-emerald-50 tracking-tight">eDTS</h1>
+                <p className="text-[10px] sm:text-sm font-medium text-emerald-600 dark:text-emerald-400 uppercase tracking-wider leading-tight">Document Tracking System</p>
               </div>
             </div>
-            
-            <button
-              onClick={handleLogout}
-              className="flex items-center justify-center gap-2 px-3 py-2 border border-emerald-300 dark:border-emerald-700 text-emerald-800 dark:text-emerald-100 rounded-lg transition-all font-semibold hover:bg-emerald-100 dark:hover:bg-emerald-900/50"
-            >
-              <LogOut size={16} />
-              <span className="hidden sm:inline text-sm">Logout</span>
-            </button>
+
+            <div className="flex items-center gap-1.5 sm:gap-2">
+              <ThemeToggle />
+              <button
+                onClick={handleLogout}
+                className="flex items-center justify-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1.5 sm:py-2 border border-emerald-300 dark:border-emerald-700 text-emerald-800 dark:text-emerald-100 rounded-lg transition-all font-semibold hover:bg-emerald-100 dark:hover:bg-emerald-900/50 text-xs sm:text-sm"
+              >
+                <LogOut size={14} className="sm:w-4 sm:h-4" />
+                <span className="hidden sm:inline">Logout</span>
+              </button>
+            </div>
           </div>
         </header>
 
-        <div className="flex flex-col sm:flex-row items-center justify-between gap-3 mb-4">
-          <div className="w-full flex-1">
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 mb-4">
+          <div className="w-full">
             <SearchInput value={searchQuery} onChange={setSearchQuery} />
           </div>
-          <button 
+          <button
             onClick={openAddModal}
-            className="w-full sm:w-auto shrink-0 flex items-center justify-center gap-2 px-5 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg transition-all font-semibold shadow-md hover:shadow-lg active:scale-95 text-sm"
+            className="w-full sm:w-auto shrink-0 flex items-center justify-center gap-2 px-4 sm:px-5 py-2 sm:py-2.5 bg-emerald-600 dark:bg-emerald-700 hover:bg-emerald-700 dark:hover:bg-emerald-600 text-white rounded-lg transition-all font-semibold text-sm sm:text-base shadow-md"
           >
             <Plus size={18} />
             <span>New Entry</span>
           </button>
         </div>
 
-        <section className="bg-white dark:bg-emerald-900/40 backdrop-blur-sm rounded-2xl shadow-xl shadow-emerald-200/50 dark:shadow-none border border-emerald-200 dark:border-emerald-800 overflow-hidden transition-all">
-          <div className="p-0.5 bg-emerald-50/50 dark:bg-emerald-800/30 border-b border-emerald-200 dark:border-emerald-800 flex items-center px-4 py-2">
-             <h2 className="text-[10px] font-bold text-emerald-600/60 dark:text-emerald-400 uppercase tracking-widest">Document Registry</h2>
+        <section className="bg-white dark:bg-emerald-900/50 rounded-xl sm:rounded-2xl shadow-lg border border-emerald-200 dark:border-emerald-800 overflow-hidden transition-all p-1.5">
+          <div className="px-3 sm:px-4 py-2.5 sm:py-3 bg-emerald-50/50 dark:bg-emerald-900/30 border-b border-emerald-200 dark:border-emerald-800 flex items-center">
+             <h2 className="text-[10px] sm:text-sm font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-widest">Document Registry</h2>
           </div>
-          <EDATTable 
-            entries={filteredEntries} 
-            onEdit={handleEdit} 
-            onDelete={handleDelete} 
+          <EDATTable
+            entries={filteredEntries}
+            onEdit={handleEdit}
+            onDelete={handleDelete}
+            onView={handleView}
           />
         </section>
       </div>
 
-      <footer className="w-full bg-white/60 dark:bg-emerald-950/40 backdrop-blur-sm border-t border-emerald-200 dark:border-emerald-800 py-2 px-6 flex justify-between items-center text-center shrink-0">
-        <p className="text-[10px] font-medium text-emerald-700/60 dark:text-emerald-400/60">© {new Date().getFullYear()} Planning and Management Division</p>
-        <p className="text-[9px] text-emerald-400/50 dark:text-emerald-600/50 uppercase tracking-tighter italic">Working towards a sustainable environment</p>
+      <footer className="w-full bg-gray-100 dark:bg-emerald-950 border-t border-emerald-200 dark:border-emerald-800 py-3 px-4 sm:px-6 flex flex-col justify-center items-center text-center gap-1 shrink-0">
+        <p className="text-[10px] sm:text-sm font-medium text-gray-600 dark:text-emerald-400/60">© {new Date().getFullYear()} Department of Environment and Natural Resources - CAR</p>
+        <p className="text-[10px] text-gray-500 dark:text-emerald-600/50 uppercase tracking-wider italic">Working towards a sustainable environment</p>
       </footer>
 
-      <EDATModal 
-        isOpen={isModalOpen} 
-        onClose={() => setIsModalOpen(false)} 
-        onSubmit={handleAddEntry} 
+      <EDATModal
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        onSubmit={handleAddEntry}
         entry={editingEntry}
+      />
+
+      <EDATViewModal
+        isOpen={isViewModalOpen}
+        onClose={() => setIsViewModalOpen(false)}
+        entry={viewingEntry}
       />
     </main>
   );

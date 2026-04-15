@@ -11,9 +11,9 @@ export async function PUT(
     
     const query = `
       UPDATE logs SET 
-        tracking_number = ?, edats_number = ?, status = ?, date_sent = ?, sender = ?, 
+        tracking_number = ?, edats_number = ?, status = ?, time_sent = ?, date_sent = ?, sender = ?, 
         subject = ?, actioned_by = ?, action_taken = ?, receiver = ?, 
-        action_taken_receiver = ?, date_received = ?
+        action_taken_receiver = ?, time_received = ?, date_received = ?
       WHERE tracking_number = ?
     `;
     
@@ -21,6 +21,7 @@ export async function PUT(
       data.trackingNumber,
       data.edatsNumber,
       data.status || 'Pending',
+      data.timeSent || null,
       data.dateSent ? new Date(data.dateSent).toISOString().split('T')[0] : null,
       data.sender,
       data.subject,
@@ -28,6 +29,7 @@ export async function PUT(
       data.actionTaken || '',
       data.receiver || '',
       data.actionTakenReceiver || '',
+      data.timeReceived || null,
       data.dateReceived ? new Date(data.dateReceived).toISOString().split('T')[0] : null,
       id // Use original tracking number as the identifier
     ];

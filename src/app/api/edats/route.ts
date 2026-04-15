@@ -3,7 +3,7 @@ import pool from '@/lib/db';
 
 export async function GET() {
   try {
-    const [rows]: any = await pool.query('SELECT * FROM logs ORDER BY date_sent DESC');
+    const [rows]: any = await pool.query('SELECT * FROM logs ORDER BY date_sent DESC, time_sent DESC');
     
     // Map snake_case from DB to camelCase for frontend
     const entries = rows.map((row: any) => ({
@@ -11,6 +11,7 @@ export async function GET() {
       trackingNumber: row.tracking_number,
       edatsNumber: row.edats_number,
       status: row.status,
+      timeSent: row.time_sent,
       dateSent: row.date_sent,
       sender: row.sender,
       subject: row.subject,
@@ -18,6 +19,7 @@ export async function GET() {
       actionTaken: row.action_taken,
       receiver: row.receiver,
       actionTakenReceiver: row.action_taken_receiver,
+      timeReceived: row.time_received,
       dateReceived: row.date_received,
     }));
 
@@ -34,15 +36,16 @@ export async function POST(request: Request) {
     
     const query = `
       INSERT INTO logs (
-        tracking_number, edats_number, status, date_sent, sender, subject, 
-        actioned_by, action_taken, receiver, action_taken_receiver, date_received
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        tracking_number, edats_number, status, time_sent, date_sent, sender, subject, 
+        actioned_by, action_taken, receiver, action_taken_receiver, time_received, date_received
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
     
     const values = [
       data.trackingNumber,
       data.edatsNumber,
       data.status || 'Pending',
+      data.timeSent || null,
       data.dateSent ? new Date(data.dateSent).toISOString().split('T')[0] : null,
       data.sender,
       data.subject,
@@ -50,6 +53,7 @@ export async function POST(request: Request) {
       data.actionTaken || '',
       data.receiver || '',
       data.actionTakenReceiver || '',
+      data.timeReceived || null,
       data.dateReceived ? new Date(data.dateReceived).toISOString().split('T')[0] : null,
     ];
 
