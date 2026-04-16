@@ -4,8 +4,6 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { EDATEntry } from '@/types/edat';
 import EDATTable from '@/components/EDATTable';
-import EDATModal from '@/components/EDATModal';
-import EDATViewModal from '@/components/EDATViewModal';
 import SearchInput from '@/components/SearchInput';
 import ThemeToggle from '@/components/ThemeToggle';
 import { useThemeValue } from '@/components/ThemeProvider';
@@ -15,10 +13,6 @@ export default function Home() {
   const router = useRouter();
   const [entries, setEntries] = useState<EDATEntry[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [isViewModalOpen, setIsViewModalOpen] = useState(false);
-  const [editingEntry, setEditingEntry] = useState<EDATEntry | null>(null);
-  const [viewingEntry, setViewingEntry] = useState<EDATEntry | null>(null);
   const [isLoaded, setIsLoaded] = useState(false);
   const [currentTime, setCurrentTime] = useState(new Date());
   const { theme } = useThemeValue();
@@ -74,43 +68,8 @@ export default function Home() {
     );
   }, [entries, searchQuery]);
 
-  const handleAddEntry = async (newEntry: Omit<EDATEntry, 'id'> & { id?: string }) => {
-    try {
-      if (newEntry.id) {
-        const response = await fetch(`/api/edats/${newEntry.id}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(newEntry),
-        });
-        if (response.ok) {
-          const updated = await response.json();
-          setEntries(prev => prev.map(e => e.id === updated.id ? updated : e));
-        }
-      } else {
-        const response = await fetch('/api/edats', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(newEntry),
-        });
-        if (response.ok) {
-          const added = await response.json();
-          setEntries(prev => [added, ...prev]);
-        }
-      }
-    } catch (error) {
-      console.error('Failed to save entry', error);
-      alert('Failed to save entry. Please try again.');
-    }
-  };
-
-  const handleEdit = (entry: EDATEntry) => {
-    setEditingEntry(entry);
-    setIsModalOpen(true);
-  };
-
   const handleView = (entry: EDATEntry) => {
-    setViewingEntry(entry);
-    setIsViewModalOpen(true);
+    router.push(`/edats/${encodeURIComponent(entry.id)}`);
   };
 
   const handleDelete = async (id: string) => {
@@ -130,8 +89,7 @@ export default function Home() {
   };
 
   const openAddModal = () => {
-    setEditingEntry(null);
-    setIsModalOpen(true);
+    router.push('/edats/new');
   };
 
   const handleLogout = async () => {
@@ -201,7 +159,6 @@ export default function Home() {
           </div>
           <EDATTable
             entries={filteredEntries}
-            onEdit={handleEdit}
             onDelete={handleDelete}
             onView={handleView}
           />
@@ -212,19 +169,6 @@ export default function Home() {
         <p className="text-[10px] sm:text-sm font-medium text-gray-600 dark:text-emerald-400/60">© {new Date().getFullYear()} Department of Environment and Natural Resources - CAR</p>
         <p className="text-[10px] text-gray-500 dark:text-emerald-600/50 uppercase tracking-wider italic">Working towards a sustainable environment</p>
       </footer>
-
-      <EDATModal
-        isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
-        onSubmit={handleAddEntry}
-        entry={editingEntry}
-      />
-
-      <EDATViewModal
-        isOpen={isViewModalOpen}
-        onClose={() => setIsViewModalOpen(false)}
-        entry={viewingEntry}
-      />
     </main>
   );
 }

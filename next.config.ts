@@ -15,10 +15,8 @@ const getLocalIPs = () => {
   return ips;
 };
 
-const nextConfig: NextConfig = {
-  /* config options here */
-  // @ts-ignore
-  allowedDevOrigins: getLocalIPs()
+const nextConfig: NextConfig & { allowedDevOrigins: string[] } = {
+  allowedDevOrigins: getLocalIPs(),
 };
 
 export default nextConfig;

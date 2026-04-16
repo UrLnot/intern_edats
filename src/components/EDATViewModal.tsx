@@ -11,24 +11,15 @@ interface EDATViewModalProps {
   entry: EDATEntry | null;
 }
 
-export default function EDATViewModal({ isOpen, onClose, entry }: EDATViewModalProps) {
-  if (!isOpen || !entry) return null;
+type DetailItemProps = {
+  icon: React.ComponentType<{ size?: number }>;
+  label: string;
+  value: React.ReactNode;
+  colorClass?: string;
+};
 
-  const formatTime = (timeStr: string | null | undefined) => {
-    if (!timeStr) return 'Not set';
-    return timeStr.split('.')[0];
-  };
-
-  const formatDate = (dateStr: string | null | undefined) => {
-    if (!dateStr) return 'Not set';
-    try {
-      return format(new Date(dateStr), 'MMMM dd, yyyy');
-    } catch (e) {
-      return dateStr;
-    }
-  };
-
-  const DetailItem = ({ icon: Icon, label, value, colorClass = 'text-emerald-900 dark:text-emerald-50' }: { icon: any, label: string, value: string | null | undefined, colorClass?: string }) => (
+function DetailItem({ icon: Icon, label, value, colorClass = 'text-emerald-900 dark:text-emerald-50' }: DetailItemProps) {
+  return (
     <div className="space-y-1">
       <div className="flex items-center gap-2 text-xs font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider">
         <Icon size={14} />
@@ -39,6 +30,39 @@ export default function EDATViewModal({ isOpen, onClose, entry }: EDATViewModalP
       </p>
     </div>
   );
+}
+
+export default function EDATViewModal({ isOpen, onClose, entry }: EDATViewModalProps) {
+  if (!isOpen || !entry) return null;
+
+  const formatActionRequired = (value: EDATEntry['actionRequired'] | null | undefined) => {
+    if (!value || value.length === 0) return 'Not set';
+    return value.join(', ');
+  };
+
+  const formatTimeReceived = (timeStr: string | null | undefined) => {
+    if (!timeStr) return 'Not set';
+    const cleaned = timeStr.split('.')[0] ?? '';
+    if (/^00:00(?::00)?$/.test(cleaned)) return 'Not set';
+    return cleaned;
+  };
+
+  const formatDate = (dateStr: string | null | undefined) => {
+    if (!dateStr) return 'Not set';
+    try {
+      return format(new Date(dateStr), 'MMMM dd, yyyy');
+    } catch {
+      return dateStr;
+    }
+  };
+
+  const formatDueIn = (dueIn: EDATEntry['dueIn'] | null | undefined) => {
+    if (dueIn === 'technical') return 'Technical (7 days)';
+    if (dueIn === 'highlyTechnical') return 'Highly Technical (20 days)';
+    return 'Simple (3 days)';
+  };
+
+  const routeHistory = entry.routeHistory ?? [];
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-emerald-950/60 dark:bg-emerald-950/80 backdrop-blur-sm p-2 sm:p-4">
@@ -101,6 +125,15 @@ export default function EDATViewModal({ isOpen, onClose, entry }: EDATViewModalP
                   <div className="sm:col-span-2">
                     <DetailItem icon={FileText} label="Subject" value={entry.subject} />
                   </div>
+                  <div className="sm:col-span-2">
+                    <DetailItem icon={FileText} label="Type of Document" value={entry.documentType} />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <DetailItem icon={CheckCircle2} label="Action Required" value={formatActionRequired(entry.actionRequired)} />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <DetailItem icon={Calendar} label="Due In" value={formatDueIn(entry.dueIn)} />
+                  </div>
                   <DetailItem icon={User} label="Sender" value={entry.sender} />
                   <DetailItem icon={User} label="Receiver" value={entry.receiver} />
                 </div>
@@ -112,13 +145,8 @@ export default function EDATViewModal({ isOpen, onClose, entry }: EDATViewModalP
                   <h4 className="text-sm font-black text-emerald-900 dark:text-emerald-50 uppercase tracking-[0.2em] border-l-4 border-emerald-500 pl-3">
                     Outbound Details
                   </h4>
-                  <div className="grid grid-cols-2 gap-6 pl-4">
-                    <DetailItem icon={Clock} label="Time Sent" value={formatTime(entry.timeSent)} />
-                    <DetailItem icon={Calendar} label="Date Sent" value={formatDate(entry.dateSent)} />
-                  </div>
-                  <div className="space-y-6 pl-4 pt-4 border-t border-emerald-100 dark:border-emerald-800/50">
-                    <DetailItem icon={User} label="Actioned By" value={entry.actionedBy} />
-                    <DetailItem icon={CheckCircle2} label="Action Taken" value={entry.actionTaken} />
+                  <div className="grid grid-cols-1 gap-6 pl-4">
+                    <DetailItem icon={Calendar} label="Date Forwarded" value={formatDate(entry.dateForwarded)} />
                   </div>
                 </div>
 
@@ -128,13 +156,36 @@ export default function EDATViewModal({ isOpen, onClose, entry }: EDATViewModalP
                     Inbound Details
                   </h4>
                   <div className="grid grid-cols-2 gap-6 pl-4">
-                    <DetailItem icon={Clock} label="Time Received" value={formatTime(entry.timeReceived)} />
+                    <DetailItem icon={Clock} label="Time Received" value={formatTimeReceived(entry.timeReceived)} />
                     <DetailItem icon={Calendar} label="Date Received" value={formatDate(entry.dateReceived)} />
                   </div>
                   <div className="space-y-6 pl-4 pt-4 border-t border-emerald-100 dark:border-emerald-800/50">
                     <DetailItem icon={CheckCircle2} label="Receiver Action" value={entry.actionTakenReceiver} />
                   </div>
                 </div>
+              </div>
+
+              <div className="space-y-6 p-6 bg-emerald-50/30 dark:bg-emerald-950/20 rounded-2xl border border-emerald-100/50 dark:border-emerald-800/30">
+                <h4 className="text-sm font-black text-emerald-900 dark:text-emerald-50 uppercase tracking-[0.2em] border-l-4 border-emerald-500 pl-3">
+                  Route History
+                </h4>
+                {routeHistory.length === 0 ? (
+                  <div className="pl-4 text-sm text-emerald-600/70 dark:text-emerald-300/60 italic">No route steps yet.</div>
+                ) : (
+                  <div className="space-y-3 pl-4">
+                    {routeHistory.map((step, index) => (
+                      <div key={`${step.personnel}-${index}`} className="p-4 border border-emerald-200 dark:border-emerald-800 rounded-xl bg-white dark:bg-emerald-950/30">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="text-sm lg:text-base font-bold text-emerald-900 dark:text-emerald-50">
+                            {step.personnel}
+                          </div>
+                        </div>
+                        {step.action ? <div className="mt-2 text-sm text-emerald-800 dark:text-emerald-200">{step.action}</div> : null}
+                        {step.remarks ? <div className="mt-1 text-sm text-emerald-700/80 dark:text-emerald-300/80">{step.remarks}</div> : null}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           </div>
