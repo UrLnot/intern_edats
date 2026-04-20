@@ -121,4 +121,23 @@ body {
   .dark ::-webkit-calendar-picker-indicator:hover {
     background-color: rgba(16, 185, 129, 0.2);
   }
+
+  select {
+    color-scheme: light;
+  }
+
+  .dark select {
+    color-scheme: dark;
+  }
+
+  select option {
+    padding: 10px 14px;
+    background-color: #ffffff;
+    color: #064e3b;
+  }
+
+  .dark select option {
+    background-color: #022c22;
+    color: #ecfdf5;
+  }
 }

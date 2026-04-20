@@ -11,20 +11,13 @@ type LogRow = RowDataPacket & {
   document_type: string | null;
   actioned_required: string | null;
   due_in: string | null;
+  section: string | null;
+  route_history?: string | null;
   receiver: string;
   action_taken_receiver: string;
   time_received: string | null;
   date_received: string | Date | null;
   status: string;
-};
-
-type RouteHistoryRow = RowDataPacket & {
-  id: number;
-  tracking_number: string;
-  step_index: number;
-  personnel: string;
-  action: string | null;
-  remarks: string | null;
 };
 
 const normalizeDueIn = (value: unknown): 'simple' | 'technical' | 'highlyTechnical' =>
@@ -127,6 +120,19 @@ const parseRouteHistory = (value: unknown): Array<{ personnel: string; action: s
   }
 };
 
+const updateRouteHistoryTx = async (
+  conn: { query: (sql: string, values?: unknown[]) => Promise<unknown> },
+  trackingNumber: string,
+  value: unknown
+) => {
+  const steps = parseRouteHistory(value);
+  const json = steps.length ? JSON.stringify(steps) : '';
+  await conn.query(
+    'INSERT INTO route_history (tracking_number, history) VALUES (?, ?) ON DUPLICATE KEY UPDATE history = VALUES(history)',
+    [trackingNumber, json]
+  );
+};
+
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -141,18 +147,13 @@ export async function GET(
 
     let routeHistory: Array<{ personnel: string; action: string; remarks: string }> = [];
     try {
-      const [routeRows] = await pool.query<RouteHistoryRow[]>(
-        `SELECT id, tracking_number, step_index, personnel, action, remarks
-         FROM route_history
-         WHERE tracking_number = ?
-         ORDER BY step_index ASC, id ASC`,
+      const [routeRows] = await pool.query<Array<RowDataPacket & { history: string }>>(
+        'SELECT history FROM route_history WHERE tracking_number = ? LIMIT 1',
         [id]
       );
-      routeHistory = routeRows.map((r) => ({
-        personnel: r.personnel,
-        action: r.action ?? '',
-        remarks: r.remarks ?? '',
-      }));
+      if (routeRows[0]) {
+        routeHistory = parseRouteHistory(routeRows[0].history);
+      }
     } catch {}
 
     return NextResponse.json({
@@ -166,7 +167,8 @@ export async function GET(
       documentType: row.document_type ?? '',
       actionRequired: parseActionRequired(row.actioned_required),
       dueIn: row.due_in === 'technical' || row.due_in === 'highlyTechnical' ? row.due_in : 'simple',
-      routeHistory,
+      routeHistory: routeHistory.length ? routeHistory : parseRouteHistory(row.route_history),
+      section: row.section ?? '',
       receiver: row.receiver,
       actionTakenReceiver: row.action_taken_receiver,
       timeReceived: row.time_received,
@@ -233,10 +235,12 @@ export async function PUT(
         'document_type = ?',
         'actioned_required = ?',
         'due_in = ?',
+        'section = ?',
         'receiver = ?',
         'action_taken_receiver = ?',
         'time_received = ?',
         'date_received = ?',
+        'route_history = ?',
       ];
 
       const values: unknown[] = [
@@ -258,10 +262,14 @@ export async function PUT(
             ? data.actionRequired
             : '',
         dueIn,
+        data.section || '',
         receiver,
         data.actionTakenReceiver || '',
         timeReceivedToSet,
         dateReceivedToSet,
+        typeof data.routeHistory !== 'undefined'
+          ? JSON.stringify(parseRouteHistory(data.routeHistory))
+          : null,
       ];
 
       values.push(id);
@@ -272,19 +280,11 @@ export async function PUT(
       if (typeof data.routeHistory !== 'undefined') {
         const oldTrackingNumber = id;
         const newTrackingNumber = typeof data.trackingNumber === 'string' ? data.trackingNumber : id;
-        const steps = parseRouteHistory(data.routeHistory);
-
-        await conn.query('DELETE FROM route_history WHERE tracking_number = ?', [oldTrackingNumber]);
-        if (steps.length > 0) {
-          const rows = steps.map((step, index) => [
-            newTrackingNumber,
-            index + 1,
-            step.personnel,
-            step.action || null,
-            step.remarks || null,
-          ]);
-          await conn.query('INSERT INTO route_history (tracking_number, step_index, personnel, action, remarks) VALUES ?', [rows]);
+        
+        if (oldTrackingNumber !== newTrackingNumber) {
+          await conn.query('DELETE FROM route_history WHERE tracking_number = ?', [oldTrackingNumber]);
         }
+        await updateRouteHistoryTx(conn, newTrackingNumber, data.routeHistory);
       }
 
       await conn.commit();
@@ -309,6 +309,9 @@ export async function DELETE(
     const { id } = await params;
     try {
       await pool.query('DELETE FROM route_history WHERE tracking_number = ?', [id]);
+    } catch {}
+    try {
+      await pool.query('DELETE FROM attachments WHERE tracking_number = ?', [id]);
     } catch {}
     await pool.query('DELETE FROM logs WHERE tracking_number = ?', [id]);
     return NextResponse.json({ message: 'Entry deleted' });

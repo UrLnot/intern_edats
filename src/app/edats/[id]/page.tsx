@@ -1,10 +1,10 @@
 'use client';
-
 import React, { useEffect, useMemo, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
+import Image from 'next/image';
 import { EDATEntry, EDATRouteStep } from '@/types/edat';
 import ThemeToggle from '@/components/ThemeToggle';
-import { ArrowLeft, Check, LogOut, Pencil, Plus, Save, Trash2, Trees, X } from 'lucide-react';
+import { ArrowLeft, Check, Download, LogOut, Paperclip, Pencil, Plus, Save, Trash2, Trees, X } from 'lucide-react';
 
 const ACTION_REQUIRED_OPTIONS = [
   'For appropriate action',
@@ -34,6 +34,7 @@ const EMPTY_ENTRY: EDATEntry = {
   actionRequired: [],
   dueIn: 'simple',
   routeHistory: [],
+  section: '',
   receiver: '',
   actionTakenReceiver: '',
   timeReceived: '',
@@ -99,6 +100,7 @@ const normalizeEntry = (value: unknown): EDATEntry => {
     actionRequired: Array.isArray(v.actionRequired) ? v.actionRequired.filter((x): x is string => typeof x === 'string') : [],
     dueIn: v.dueIn === 'technical' || v.dueIn === 'highlyTechnical' ? v.dueIn : 'simple',
     routeHistory: normalizeRouteHistory(v.routeHistory),
+    section: typeof v.section === 'string' ? v.section : '',
     receiver: typeof v.receiver === 'string' ? v.receiver : '',
     actionTakenReceiver: typeof v.actionTakenReceiver === 'string' ? v.actionTakenReceiver : '',
     timeReceived: typeof v.timeReceived === 'string' ? v.timeReceived.split('.')[0] : '',
@@ -113,6 +115,16 @@ type FieldKey =
   | 'dueIn'
   | 'routeHistory';
 
+type AttachmentItem = {
+  id: number;
+  name: string;
+  originalName: string;
+  type: string;
+  size: number;
+  url: string;
+  createdAt?: string;
+};
+
 export default function EntryDetailsPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
@@ -124,6 +136,9 @@ export default function EntryDetailsPage() {
   const [activeEdit, setActiveEdit] = useState<FieldKey | null>(null);
   const [routeDraft, setRouteDraft] = useState<EDATRouteStep>({ personnel: '', action: '', remarks: '' });
   const [currentTime, setCurrentTime] = useState(new Date());
+  const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
+  const [selectedAttachmentId, setSelectedAttachmentId] = useState<number | null>(null);
+  const [attachmentsLoading, setAttachmentsLoading] = useState(false);
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
@@ -157,6 +172,41 @@ export default function EntryDetailsPage() {
   }, [params.id]);
 
   useEffect(() => {
+    const loadAttachments = async () => {
+      if (!params.id) return;
+      setAttachmentsLoading(true);
+      try {
+        const response = await fetch(`/api/edats/${encodeURIComponent(params.id)}/attachments`);
+        if (!response.ok) return;
+        const data = (await response.json()) as unknown;
+        const list = Array.isArray(data)
+          ? data
+              .filter((v): v is Record<string, unknown> => typeof v === 'object' && v !== null)
+              .map((v) => ({
+                id: typeof v.id === 'number' ? v.id : -1,
+                name: typeof v.name === 'string' ? v.name : '',
+                originalName: typeof v.originalName === 'string' ? v.originalName : '',
+                type: typeof v.type === 'string' ? v.type : '',
+                size: typeof v.size === 'number' ? v.size : 0,
+                url: typeof v.url === 'string' ? v.url : '',
+                createdAt: typeof v.createdAt === 'string' ? v.createdAt : undefined,
+              }))
+              .filter((v) => v.id >= 0 && v.url)
+          : [];
+        setAttachments(list);
+        setSelectedAttachmentId((prev) => {
+          if (prev !== null && list.some((a) => a.id === prev)) return prev;
+          return list[0]?.id ?? null;
+        });
+      } catch {
+      } finally {
+        setAttachmentsLoading(false);
+      }
+    };
+    loadAttachments();
+  }, [params.id]);
+
+  useEffect(() => {
     if (!entry.receiver.trim()) return;
     if (entry.dateReceived && entry.timeReceived) return;
     const { date, time } = getCurrentManilaDateTime();
@@ -184,6 +234,7 @@ export default function EntryDetailsPage() {
       if (field === 'actionRequired') return { ...prev, actionRequired: [...savedEntry.actionRequired] };
       if (field === 'routeHistory') return { ...prev, routeHistory: savedEntry.routeHistory.map((s) => ({ ...s })) };
       if (field === 'dueIn') return { ...prev, dueIn: savedEntry.dueIn };
+      if (field === 'section') return { ...prev, section: savedEntry.section };
       if (field === 'receiver') {
         return {
           ...prev,
@@ -285,6 +336,22 @@ export default function EntryDetailsPage() {
   };
 
   if (loading) return <div className="p-6 text-emerald-700">Loading...</div>;
+
+  const formatBytes = (bytes: number) => {
+    if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+    const value = bytes / Math.pow(1024, i);
+    return `${value.toFixed(value >= 10 || i === 0 ? 0 : 1)} ${units[i]}`;
+  };
+
+  const selectedAttachment = attachments.find((a) => a.id === selectedAttachmentId) ?? null;
+  const selectedExt = selectedAttachment?.originalName?.split('.').pop()?.toLowerCase() ?? '';
+  const selectedMime = selectedAttachment?.type?.toLowerCase() ?? '';
+  const isPdf = selectedMime.includes('pdf') || selectedExt === 'pdf';
+  const isImage =
+    selectedMime.startsWith('image/') ||
+    ['png', 'jpg', 'jpeg', 'gif', 'webp'].includes(selectedExt);
 
   return (
     <main className="min-h-screen flex flex-col bg-gray-50 dark:bg-emerald-950">
@@ -431,6 +498,10 @@ export default function EntryDetailsPage() {
               Inbound Details
             </h3>
             <div className="grid grid-cols-1 gap-4">
+              <FieldRow label="Section" editing={isEditing('section')} onToggle={() => toggleEdit('section')} onCancel={() => cancelEdit('section')} onSave={saveEntry} saving={saving}>
+                <input disabled={!isEditing('section')} value={entry.section} onChange={(e) => setField('section', e.target.value)} className={inputClass(isEditing('section'))} />
+              </FieldRow>
+
               <FieldRow label="Receiver" editing={isEditing('receiver')} onToggle={() => toggleEdit('receiver')} onCancel={() => cancelEdit('receiver')} onSave={saveEntry} saving={saving}>
                 <input disabled={!isEditing('receiver')} value={entry.receiver} onChange={(e) => setField('receiver', e.target.value)} className={inputClass(isEditing('receiver'))} />
               </FieldRow>
@@ -512,6 +583,117 @@ export default function EntryDetailsPage() {
               )}
             </div>
           </FieldRow>
+
+          <section className="space-y-4">
+            <h3 className="text-sm sm:text-base font-black text-emerald-900 dark:text-emerald-50 uppercase tracking-[0.2em] border-l-4 border-emerald-500 pl-3">
+              Attachments
+            </h3>
+
+            {attachmentsLoading ? (
+              <div className="text-base text-emerald-700/70 dark:text-emerald-300/70 italic">Loading attachments...</div>
+            ) : attachments.length === 0 ? (
+              <div className="text-base text-emerald-700/70 dark:text-emerald-300/70 italic">No attachments.</div>
+            ) : (
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                <div className="lg:col-span-1">
+                  <div className="grid grid-cols-1 gap-2">
+                    {attachments.map((file) => {
+                      const active = file.id === selectedAttachmentId;
+                      return (
+                        <button
+                          key={file.id}
+                          type="button"
+                          onClick={() => setSelectedAttachmentId(file.id)}
+                          className={`w-full text-left flex items-center justify-between gap-3 p-3 rounded-xl border transition-all ${
+                            active
+                              ? 'bg-emerald-100/60 dark:bg-emerald-900/40 border-emerald-300/70 dark:border-emerald-700/70 shadow-sm'
+                              : 'bg-white/70 dark:bg-emerald-950/20 border-emerald-200/70 dark:border-emerald-800/70 hover:bg-white dark:hover:bg-emerald-950/30'
+                          }`}
+                        >
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2">
+                              <Paperclip size={14} className="text-emerald-600 dark:text-emerald-400 shrink-0" />
+                              <span className="text-sm font-semibold text-emerald-900 dark:text-emerald-50 truncate" title={file.originalName || file.name}>
+                                {file.originalName || file.name}
+                              </span>
+                            </div>
+                            <div className="mt-1 text-[11px] font-mono text-emerald-700/70 dark:text-emerald-300/70">
+                              {formatBytes(file.size)}
+                            </div>
+                          </div>
+                          <a
+                            href={file.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="shrink-0 inline-flex items-center gap-1.5 px-2.5 py-2 rounded-lg text-emerald-700 dark:text-emerald-200 hover:bg-emerald-50 dark:hover:bg-emerald-900/40 transition-colors"
+                            onClick={(e) => e.stopPropagation()}
+                            title="Open in new tab"
+                          >
+                            <Download size={14} />
+                          </a>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="lg:col-span-2">
+                  {selectedAttachment ? (
+                    <div className="rounded-2xl border border-emerald-200/70 dark:border-emerald-800/70 bg-white/70 dark:bg-emerald-950/20 overflow-hidden">
+                      <div className="px-4 py-3 border-b border-emerald-200/60 dark:border-emerald-800/60 flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="text-sm font-bold text-emerald-900 dark:text-emerald-50 truncate">
+                            {selectedAttachment.originalName || selectedAttachment.name}
+                          </div>
+                          <div className="text-[11px] font-mono text-emerald-700/70 dark:text-emerald-300/70">
+                            {formatBytes(selectedAttachment.size)}
+                          </div>
+                        </div>
+                        <a
+                          href={selectedAttachment.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold uppercase tracking-wider shadow-sm"
+                        >
+                          <Download size={14} />
+                          Open
+                        </a>
+                      </div>
+
+                      <div className="p-3">
+                        {isPdf ? (
+                          <iframe
+                            src={selectedAttachment.url}
+                            className="w-full h-[520px] rounded-xl border border-emerald-200 dark:border-emerald-800 bg-white"
+                            title={selectedAttachment.originalName || selectedAttachment.name}
+                          />
+                        ) : isImage ? (
+                          <div className="w-full h-[520px] rounded-xl border border-emerald-200 dark:border-emerald-800 bg-white/60 dark:bg-emerald-950/10 overflow-hidden relative">
+                            <Image
+                              src={selectedAttachment.url}
+                              alt={selectedAttachment.originalName || selectedAttachment.name}
+                              fill
+                              sizes="(max-width: 1024px) 100vw, 66vw"
+                              className="object-contain"
+                              priority={false}
+                            />
+                          </div>
+                        ) : (
+                          <div className="w-full rounded-xl border border-emerald-200 dark:border-emerald-800 bg-white/60 dark:bg-emerald-950/10 p-6">
+                            <div className="text-sm text-emerald-800 dark:text-emerald-200">
+                              Preview not available for this file type. Use Open to view/download.
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-base text-emerald-700/70 dark:text-emerald-300/70 italic">Select an attachment to preview.</div>
+                  )}
+                </div>
+              </div>
+            )}
+          </section>
           </div>
         </section>
       </div>

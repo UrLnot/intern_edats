@@ -4,7 +4,7 @@ import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { EDATEntry, EDATRouteStep } from '@/types/edat';
 import ThemeToggle from '@/components/ThemeToggle';
-import { ArrowLeft, LogOut, Plus, Trash2, Trees } from 'lucide-react';
+import { ArrowLeft, LogOut, Paperclip, Plus, Trash2, Trees, X } from 'lucide-react';
 
 const ACTION_REQUIRED_OPTIONS = [
   'For appropriate action',
@@ -51,6 +51,7 @@ const EMPTY_ENTRY: Omit<EDATEntry, 'id'> = {
   actionRequired: [],
   dueIn: 'simple',
   routeHistory: [],
+  section: '',
   receiver: '',
   actionTakenReceiver: '',
   timeReceived: '',
@@ -79,6 +80,7 @@ export default function NewEntryPage() {
   const [formData, setFormData] = useState<Omit<EDATEntry, 'id'>>({ ...EMPTY_ENTRY });
   const [routeDraft, setRouteDraft] = useState<EDATRouteStep>({ personnel: '', action: '', remarks: '' });
   const [generatedIds, setGeneratedIds] = useState<{ trackingNumber: string; edatsNumber: string } | null>(null);
+  const [attachments, setAttachments] = useState<File[]>([]);
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
@@ -175,6 +177,32 @@ export default function NewEntryPage() {
     setFormData((prev) => ({ ...prev, routeHistory: prev.routeHistory.filter((_, i) => i !== index) }));
   };
 
+  const addAttachments = (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    const incoming = Array.from(files);
+    setAttachments((prev) => {
+      const next = [...prev];
+      for (const file of incoming) {
+        if (!next.some((f) => f.name === file.name && f.size === file.size && f.lastModified === file.lastModified)) {
+          next.push(file);
+        }
+      }
+      return next;
+    });
+  };
+
+  const removeAttachment = (index: number) => {
+    setAttachments((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const formatBytes = (bytes: number) => {
+    if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+    const value = bytes / Math.pow(1024, i);
+    return `${value.toFixed(value >= 10 || i === 0 ? 0 : 1)} ${units[i]}`;
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
@@ -186,7 +214,32 @@ export default function NewEntryPage() {
       });
       if (!response.ok) throw new Error('Failed');
       const created = await response.json();
-      router.push(`/edats/${encodeURIComponent(created.id || created.trackingNumber)}`);
+      const trackingNumber =
+        typeof created.trackingNumber === 'string'
+          ? created.trackingNumber
+          : typeof created.id === 'string'
+            ? created.id
+            : '';
+
+      if (!trackingNumber) throw new Error('Missing id');
+
+      if (trackingNumber && attachments.length > 0) {
+        const form = new FormData();
+        attachments.forEach((file) => {
+          form.append('files', file, file.name);
+        });
+        const uploadResponse = await fetch(`/api/edats/${encodeURIComponent(trackingNumber)}/attachments`, {
+          method: 'POST',
+          body: form,
+        });
+        if (!uploadResponse.ok) {
+          alert('Entry created, but failed to upload attachments.');
+        } else {
+          setAttachments([]);
+        }
+      }
+
+      router.push(`/?created=1&newId=${encodeURIComponent(trackingNumber)}`);
     } catch {
       alert('Failed to create entry.');
     } finally {
@@ -301,9 +354,15 @@ export default function NewEntryPage() {
             </div>
 
             <div className="grid grid-cols-1 gap-4">
-              <div>
-                <label className="block text-sm font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400 mb-1">Receiver</label>
-                <input name="receiver" value={formData.receiver} onChange={handleChange} className="w-full p-2.5 text-base border rounded-lg bg-white dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800 text-emerald-900 dark:text-emerald-50" />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400 mb-1">Section</label>
+                  <input name="section" value={formData.section} onChange={handleChange} className="w-full p-2.5 text-base border rounded-lg bg-white dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800 text-emerald-900 dark:text-emerald-50" />
+                </div>
+                <div>
+                  <label className="block text-sm font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400 mb-1">Receiver</label>
+                  <input name="receiver" value={formData.receiver} onChange={handleChange} className="w-full p-2.5 text-base border rounded-lg bg-white dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800 text-emerald-900 dark:text-emerald-50" />
+                </div>
               </div>
 
               <div>
@@ -352,6 +411,55 @@ export default function NewEntryPage() {
                         ))}
                       </div>
                     </div>
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-sm font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400">Attachments</label>
+                  <label className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-100/70 dark:bg-emerald-900/40 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-100 text-sm font-semibold cursor-pointer hover:bg-emerald-100 dark:hover:bg-emerald-900/60 transition-colors">
+                    <Paperclip size={14} />
+                    Add Files
+                    <input
+                      type="file"
+                      multiple
+                      onChange={(e) => {
+                        addAttachments(e.target.files);
+                        e.currentTarget.value = '';
+                      }}
+                      className="hidden"
+                    />
+                  </label>
+                </div>
+
+                {attachments.length === 0 ? (
+                  <div className="text-base text-emerald-600/70 dark:text-emerald-300/60 italic">No attachments added.</div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 p-3 rounded-lg border border-emerald-200 dark:border-emerald-800 bg-white/70 dark:bg-emerald-950/20">
+                    {attachments.map((file, index) => (
+                      <div
+                        key={`${file.name}-${file.size}-${file.lastModified}-${index}`}
+                        className="flex items-center justify-between gap-3 p-2.5 rounded-lg border border-emerald-200/70 dark:border-emerald-800/70 bg-white dark:bg-emerald-950/30"
+                      >
+                        <div className="min-w-0">
+                          <div className="text-sm font-semibold text-emerald-900 dark:text-emerald-50 truncate" title={file.name}>
+                            {file.name}
+                          </div>
+                          <div className="text-[11px] text-emerald-700/70 dark:text-emerald-300/70 font-mono">
+                            {formatBytes(file.size)}
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => removeAttachment(index)}
+                          className="shrink-0 p-2 rounded-lg text-emerald-700/70 hover:text-emerald-900 hover:bg-emerald-50 dark:text-emerald-300/70 dark:hover:text-emerald-50 dark:hover:bg-emerald-900/40 transition-colors"
+                          title="Remove attachment"
+                        >
+                          <X size={14} />
+                        </button>
+                      </div>
+                    ))}
                   </div>
                 )}
               </div>

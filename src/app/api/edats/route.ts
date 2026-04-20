@@ -11,21 +11,13 @@ type LogRow = RowDataPacket & {
   document_type: string | null;
   actioned_required: string | null;
   due_in: string | null;
+  section: string | null;
   route_history?: string | null;
   receiver: string;
   action_taken_receiver: string;
   time_received: string | null;
   date_received: string | Date | null;
   status: string;
-};
-
-type RouteHistoryRow = RowDataPacket & {
-  id: number;
-  tracking_number: string;
-  step_index: number;
-  personnel: string;
-  action: string | null;
-  remarks: string | null;
 };
 
 const normalizeDueIn = (value: unknown): 'simple' | 'technical' | 'highlyTechnical' =>
@@ -115,6 +107,20 @@ const getNextTrackingSequenceForDate = async (datePartYYYYMMDD: string): Promise
   return next;
 };
 
+const getNextEdatsSequenceForYearMonth = async (year: string, month: string): Promise<number> => {
+  const like = `EDTS-${year}-${month}-%`;
+  const [rows] = await pool.query<Array<RowDataPacket & { edats_number: string }>>(
+    'SELECT edats_number FROM logs WHERE edats_number LIKE ? ORDER BY edats_number DESC LIMIT 1',
+    [like]
+  );
+
+  const last = rows[0]?.edats_number;
+  // Matches the last digits at the end of the string
+  const lastSeq = last ? /(\d+)$/.exec(last)?.[1] : undefined;
+  const next = (lastSeq ? parseInt(lastSeq, 10) : 0) + 1;
+  return next;
+};
+
 const parseActionRequired = (value: unknown): string[] => {
   if (Array.isArray(value)) {
     return value
@@ -178,22 +184,23 @@ const parseRouteHistory = (value: unknown): Array<{ personnel: string; action: s
   }
 };
 
-const replaceRouteHistoryTx = async (
+const serializeRouteHistory = (value: unknown): string => {
+  const list = parseRouteHistory(value);
+  return list.length ? JSON.stringify(list) : '';
+};
+
+const updateRouteHistoryTx = async (
   conn: { query: (sql: string, values?: unknown[]) => Promise<unknown> },
   trackingNumber: string,
   value: unknown
 ) => {
-  const steps = parseRouteHistory(value);
-  await conn.query('DELETE FROM route_history WHERE tracking_number = ?', [trackingNumber]);
-  if (steps.length === 0) return;
-  const rows = steps.map((step, index) => [
-    trackingNumber,
-    index + 1,
-    step.personnel,
-    step.action || null,
-    step.remarks || null,
-  ]);
-  await conn.query('INSERT INTO route_history (tracking_number, step_index, personnel, action, remarks) VALUES ?', [rows]);
+  const json = serializeRouteHistory(value);
+  // We use one row per tracking number as requested.
+  // Using INSERT ... ON DUPLICATE KEY UPDATE to handle both create and update scenarios in one row.
+  await conn.query(
+    'INSERT INTO route_history (tracking_number, history) VALUES (?, ?) ON DUPLICATE KEY UPDATE history = VALUES(history)',
+    [trackingNumber, json]
+  );
 };
 
 export async function GET(request: Request) {
@@ -202,10 +209,16 @@ export async function GET(request: Request) {
     if (url.searchParams.get('nextIds') === '1') {
       const dateForwarded = url.searchParams.get('dateForwarded');
       const datePart = getPhilippinesDatePartYYYYMMDD(dateForwarded);
-      const seq = await getNextTrackingSequenceForDate(datePart);
-      const seq4 = String(seq).padStart(4, '0');
-      const trackingNumber = `PMD-${datePart}-${seq4}`;
-      const edatsNumber = `EDTS-PMD${seq4}-${seq4}`;
+      const year = datePart.slice(0, 4);
+      const month = datePart.slice(4, 6);
+      
+      const [trackingSeq, edatsSeq] = await Promise.all([
+        getNextTrackingSequenceForDate(datePart),
+        getNextEdatsSequenceForYearMonth(year, month)
+      ]);
+
+      const trackingNumber = `PMD-${datePart}-${String(trackingSeq).padStart(4, '0')}`;
+      const edatsNumber = `EDTS-${year}-${month}-${String(edatsSeq).padStart(4, '0')}`;
       return NextResponse.json({ trackingNumber, edatsNumber });
     }
 
@@ -216,21 +229,13 @@ export async function GET(request: Request) {
     if (trackingNumbers.length > 0) {
       try {
         const placeholders = trackingNumbers.map(() => '?').join(', ');
-        const [routeRows] = await pool.query<RouteHistoryRow[]>(
-          `SELECT id, tracking_number, step_index, personnel, action, remarks
-           FROM route_history
-           WHERE tracking_number IN (${placeholders})
-           ORDER BY tracking_number ASC, step_index ASC, id ASC`,
+        // Each log has one counterpart in the route_history table containing the JSON history.
+        const [routeRows] = await pool.query<Array<RowDataPacket & { tracking_number: string; history: string }>>(
+          `SELECT tracking_number, history FROM route_history WHERE tracking_number IN (${placeholders})`,
           trackingNumbers
         );
         for (const row of routeRows) {
-          const current = routeHistoryByTracking.get(row.tracking_number) ?? [];
-          current.push({
-            personnel: row.personnel,
-            action: row.action ?? '',
-            remarks: row.remarks ?? '',
-          });
-          routeHistoryByTracking.set(row.tracking_number, current);
+          routeHistoryByTracking.set(row.tracking_number, parseRouteHistory(row.history));
         }
       } catch {}
     }
@@ -248,6 +253,7 @@ export async function GET(request: Request) {
       actionRequired: parseActionRequired(row.actioned_required),
       dueIn: row.due_in === 'technical' || row.due_in === 'highlyTechnical' ? row.due_in : 'simple',
       routeHistory: routeHistoryByTracking.get(row.tracking_number) ?? parseRouteHistory(row.route_history),
+      section: row.section ?? '',
       receiver: row.receiver,
       actionTakenReceiver: row.action_taken_receiver,
       timeReceived: row.time_received,
@@ -282,10 +288,12 @@ export async function POST(request: Request) {
       'document_type',
       'actioned_required',
       'due_in',
+      'section',
       'receiver',
       'action_taken_receiver',
       'time_received',
       'date_received',
+      'route_history',
     ];
     const placeholders = columns.map(() => '?');
     const valuesBase = [
@@ -298,10 +306,12 @@ export async function POST(request: Request) {
       data.documentType || '',
       serializeActionRequired(data.actionRequired),
       dueIn,
+      data.section || '',
       receiver,
       data.actionTakenReceiver || '',
       receivedTime,
       receivedDate,
+      serializeRouteHistory(data.routeHistory),
     ];
 
     const query = `INSERT INTO logs (${columns.join(', ')}) VALUES (${placeholders.join(', ')})`;
@@ -317,7 +327,7 @@ export async function POST(request: Request) {
       try {
         await conn.beginTransaction();
         await conn.query(query, values);
-        await replaceRouteHistoryTx(conn, providedTrackingNumber, data.routeHistory);
+        await updateRouteHistoryTx(conn, providedTrackingNumber, data.routeHistory);
         await conn.commit();
       } catch (error) {
         await conn.rollback();
@@ -329,12 +339,17 @@ export async function POST(request: Request) {
     }
 
     const datePart = getPhilippinesDatePartYYYYMMDD(data.dateForwarded);
+    const year = datePart.slice(0, 4);
+    const month = datePart.slice(4, 6);
 
     for (let attempt = 0; attempt < 5; attempt++) {
-      const seq = await getNextTrackingSequenceForDate(datePart);
-      const seq4 = String(seq).padStart(4, '0');
-      const trackingNumber = `PMD-${datePart}-${seq4}`;
-      const edatsNumber = `EDTS-PMD${seq4}-${seq4}`;
+      const [trackingSeq, edatsSeq] = await Promise.all([
+        getNextTrackingSequenceForDate(datePart),
+        getNextEdatsSequenceForYearMonth(year, month)
+      ]);
+
+      const trackingNumber = `PMD-${datePart}-${String(trackingSeq).padStart(4, '0')}`;
+      const edatsNumber = `EDTS-${year}-${month}-${String(edatsSeq).padStart(4, '0')}`;
 
       const values = [...valuesBase];
       values[0] = trackingNumber;
@@ -345,7 +360,7 @@ export async function POST(request: Request) {
         try {
           await conn.beginTransaction();
           await conn.query(query, values);
-          await replaceRouteHistoryTx(conn, trackingNumber, data.routeHistory);
+          await updateRouteHistoryTx(conn, trackingNumber, data.routeHistory);
           await conn.commit();
         } catch (error) {
           await conn.rollback();

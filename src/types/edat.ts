@@ -15,6 +15,7 @@ export interface EDATEntry {
   actionRequired: string[];
   dueIn: 'simple' | 'technical' | 'highlyTechnical';
   routeHistory: EDATRouteStep[];
+  section: string;
   receiver: string;
   actionTakenReceiver: string;
   timeReceived: string;
