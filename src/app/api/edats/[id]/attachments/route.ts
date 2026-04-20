@@ -13,7 +13,7 @@ const ensureAttachmentsTable = async () => {
   if (!attachmentsTableReady) {
     attachmentsTableReady = (async () => {
       await pool.query(`
-        CREATE TABLE IF NOT EXISTS attachments (
+        CREATE TABLE IF NOT EXISTS edats_attachments (
           id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
           tracking_number VARCHAR(191) NOT NULL,
           stored_name VARCHAR(255) NOT NULL,
@@ -21,11 +21,17 @@ const ensureAttachmentsTable = async () => {
           mime_type VARCHAR(255) DEFAULT NULL,
           size BIGINT NOT NULL,
           url TEXT NOT NULL,
+          content LONGBLOB NULL,
           created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
           PRIMARY KEY (id),
           KEY idx_attachments_tracking (tracking_number)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
       `);
+
+      const [cols] = await pool.query<RowDataPacket[]>('SHOW COLUMNS FROM edats_attachments LIKE ?', ['content']);
+      if (cols.length === 0) {
+        await pool.query('ALTER TABLE edats_attachments ADD COLUMN content LONGBLOB NULL');
+      }
     })();
   }
   await attachmentsTableReady;
@@ -61,7 +67,7 @@ export async function GET(
         }
       >
     >(
-      'SELECT id, stored_name, original_name, mime_type, size, url, created_at FROM attachments WHERE tracking_number = ? ORDER BY id ASC',
+      'SELECT id, stored_name, original_name, mime_type, size, url, created_at FROM edats_attachments WHERE tracking_number = ? ORDER BY id ASC',
       [id]
     );
 
@@ -100,7 +106,14 @@ export async function POST(
       return NextResponse.json({ error: 'No files uploaded' }, { status: 400 });
     }
 
-    const saved = [];
+    const saved: {
+      name: string;
+      originalName: string;
+      size: number;
+      type: string;
+      url: string;
+      content: Buffer;
+    }[] = [];
     for (const file of files) {
       const random = crypto.randomBytes(6).toString('hex');
       const base = safeFileName(file.name || 'attachment');
@@ -115,6 +128,7 @@ export async function POST(
         size: file.size,
         type: file.type,
         url,
+        content: bytes,
       });
     }
 
@@ -125,9 +139,10 @@ export async function POST(
       f.type || null,
       f.size,
       f.url,
+      f.content,
     ]);
     await pool.query(
-      'INSERT INTO attachments (tracking_number, stored_name, original_name, mime_type, size, url) VALUES ?',
+      'INSERT INTO edats_attachments (tracking_number, stored_name, original_name, mime_type, size, url, content) VALUES ?',
       [insertRows]
     );
 

@@ -97,7 +97,7 @@ const getPhilippinesDatePartYYYYMMDD = (value: unknown): string => {
 const getNextTrackingSequenceForDate = async (datePartYYYYMMDD: string): Promise<number> => {
   const like = `PMD-${datePartYYYYMMDD}-%`;
   const [rows] = await pool.query<Array<RowDataPacket & { tracking_number: string }>>(
-    'SELECT tracking_number FROM logs WHERE tracking_number LIKE ? ORDER BY tracking_number DESC LIMIT 1',
+    'SELECT tracking_number FROM edats_logs WHERE tracking_number LIKE ? ORDER BY tracking_number DESC LIMIT 1',
     [like]
   );
 
@@ -110,7 +110,7 @@ const getNextTrackingSequenceForDate = async (datePartYYYYMMDD: string): Promise
 const getNextEdatsSequenceForYearMonth = async (year: string, month: string): Promise<number> => {
   const like = `EDTS-${year}-${month}-%`;
   const [rows] = await pool.query<Array<RowDataPacket & { edats_number: string }>>(
-    'SELECT edats_number FROM logs WHERE edats_number LIKE ? ORDER BY edats_number DESC LIMIT 1',
+    'SELECT edats_number FROM edats_logs WHERE edats_number LIKE ? ORDER BY edats_number DESC LIMIT 1',
     [like]
   );
 
@@ -198,7 +198,7 @@ const updateRouteHistoryTx = async (
   // We use one row per tracking number as requested.
   // Using INSERT ... ON DUPLICATE KEY UPDATE to handle both create and update scenarios in one row.
   await conn.query(
-    'INSERT INTO route_history (tracking_number, history) VALUES (?, ?) ON DUPLICATE KEY UPDATE history = VALUES(history)',
+    'INSERT INTO edats_route_history (tracking_number, history) VALUES (?, ?) ON DUPLICATE KEY UPDATE history = VALUES(history)',
     [trackingNumber, json]
   );
 };
@@ -222,7 +222,7 @@ export async function GET(request: Request) {
       return NextResponse.json({ trackingNumber, edatsNumber });
     }
 
-    const [rows] = await pool.query<LogRow[]>('SELECT * FROM logs ORDER BY date_forwarded DESC');
+    const [rows] = await pool.query<LogRow[]>('SELECT * FROM edats_logs ORDER BY date_forwarded DESC');
 
     const trackingNumbers = rows.map((r) => r.tracking_number);
     const routeHistoryByTracking = new Map<string, Array<{ personnel: string; action: string; remarks: string }>>();
@@ -231,7 +231,7 @@ export async function GET(request: Request) {
         const placeholders = trackingNumbers.map(() => '?').join(', ');
         // Each log has one counterpart in the route_history table containing the JSON history.
         const [routeRows] = await pool.query<Array<RowDataPacket & { tracking_number: string; history: string }>>(
-          `SELECT tracking_number, history FROM route_history WHERE tracking_number IN (${placeholders})`,
+          `SELECT tracking_number, history FROM edats_route_history WHERE tracking_number IN (${placeholders})`,
           trackingNumbers
         );
         for (const row of routeRows) {
@@ -314,7 +314,7 @@ export async function POST(request: Request) {
       serializeRouteHistory(data.routeHistory),
     ];
 
-    const query = `INSERT INTO logs (${columns.join(', ')}) VALUES (${placeholders.join(', ')})`;
+    const query = `INSERT INTO edats_logs (${columns.join(', ')}) VALUES (${placeholders.join(', ')})`;
 
     const providedTrackingNumber = typeof data.trackingNumber === 'string' ? data.trackingNumber.trim() : '';
     const providedEdatsNumber = typeof data.edatsNumber === 'string' ? data.edatsNumber.trim() : '';

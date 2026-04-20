@@ -128,7 +128,7 @@ const updateRouteHistoryTx = async (
   const steps = parseRouteHistory(value);
   const json = steps.length ? JSON.stringify(steps) : '';
   await conn.query(
-    'INSERT INTO route_history (tracking_number, history) VALUES (?, ?) ON DUPLICATE KEY UPDATE history = VALUES(history)',
+    'INSERT INTO edats_route_history (tracking_number, history) VALUES (?, ?) ON DUPLICATE KEY UPDATE history = VALUES(history)',
     [trackingNumber, json]
   );
 };
@@ -139,7 +139,7 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
-    const [rows] = await pool.query<LogRow[]>('SELECT * FROM logs WHERE tracking_number = ? LIMIT 1', [id]);
+    const [rows] = await pool.query<LogRow[]>('SELECT * FROM edats_logs WHERE tracking_number = ? LIMIT 1', [id]);
     const row = rows[0];
     if (!row) {
       return NextResponse.json({ error: 'Entry not found' }, { status: 404 });
@@ -148,7 +148,7 @@ export async function GET(
     let routeHistory: Array<{ personnel: string; action: string; remarks: string }> = [];
     try {
       const [routeRows] = await pool.query<Array<RowDataPacket & { history: string }>>(
-        'SELECT history FROM route_history WHERE tracking_number = ? LIMIT 1',
+        'SELECT history FROM edats_route_history WHERE tracking_number = ? LIMIT 1',
         [id]
       );
       if (routeRows[0]) {
@@ -201,7 +201,7 @@ export async function PUT(
       let dateReceivedToSet: string | null = null;
       if (receiver) {
         const [existingRows] = await conn.query<Array<RowDataPacket & { time_received: string | null; date_received: string | Date | null }>>(
-          'SELECT time_received, date_received FROM logs WHERE tracking_number = ? LIMIT 1 FOR UPDATE',
+          'SELECT time_received, date_received FROM edats_logs WHERE tracking_number = ? LIMIT 1 FOR UPDATE',
           [id]
         );
         const existing = existingRows[0];
@@ -273,7 +273,7 @@ export async function PUT(
       ];
 
       values.push(id);
-      const query = `UPDATE logs SET ${setParts.join(', ')} WHERE tracking_number = ?`;
+      const query = `UPDATE edats_logs SET ${setParts.join(', ')} WHERE tracking_number = ?`;
 
       await conn.query(query, values);
 
@@ -282,7 +282,7 @@ export async function PUT(
         const newTrackingNumber = typeof data.trackingNumber === 'string' ? data.trackingNumber : id;
         
         if (oldTrackingNumber !== newTrackingNumber) {
-          await conn.query('DELETE FROM route_history WHERE tracking_number = ?', [oldTrackingNumber]);
+          await conn.query('DELETE FROM edats_route_history WHERE tracking_number = ?', [oldTrackingNumber]);
         }
         await updateRouteHistoryTx(conn, newTrackingNumber, data.routeHistory);
       }
@@ -308,12 +308,12 @@ export async function DELETE(
   try {
     const { id } = await params;
     try {
-      await pool.query('DELETE FROM route_history WHERE tracking_number = ?', [id]);
+      await pool.query('DELETE FROM edats_route_history WHERE tracking_number = ?', [id]);
     } catch {}
     try {
-      await pool.query('DELETE FROM attachments WHERE tracking_number = ?', [id]);
+      await pool.query('DELETE FROM edats_attachments WHERE tracking_number = ?', [id]);
     } catch {}
-    await pool.query('DELETE FROM logs WHERE tracking_number = ?', [id]);
+    await pool.query('DELETE FROM edats_logs WHERE tracking_number = ?', [id]);
     return NextResponse.json({ message: 'Entry deleted' });
   } catch (error) {
     console.error('Failed to delete entry:', error);
