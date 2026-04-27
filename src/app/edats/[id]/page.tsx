@@ -1,10 +1,9 @@
 'use client';
 import React, { useEffect, useMemo, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import Image from 'next/image';
 import { EDATEntry, EDATRouteStep } from '@/types/edat';
 import ThemeToggle from '@/components/ThemeToggle';
-import { ArrowLeft, Check, Download, LogOut, Paperclip, Pencil, Plus, Save, Trash2, Trees, X } from 'lucide-react';
+import { ArrowLeft, Check, Download, LogOut, Paperclip, Pencil, Plus, Save, Trees, X } from 'lucide-react';
 
 const ACTION_REQUIRED_OPTIONS = [
   'For appropriate action',
@@ -37,9 +36,10 @@ const EMPTY_ENTRY: EDATEntry = {
   section: '',
   receiver: '',
   actionTakenReceiver: '',
-  timeReceived: '',
-  dateReceived: '',
+  timeReceived: null,
+  dateReceived: null,
   status: 'Pending',
+  completed: false,
 };
 
 const getCurrentManilaDateTime = () => {
@@ -79,16 +79,39 @@ const normalizeRouteHistory = (value: unknown): EDATRouteStep[] => {
   return value
     .filter((v): v is Record<string, unknown> => typeof v === 'object' && v !== null)
     .map((v) => ({
-      personnel: typeof v.personnel === 'string' ? v.personnel : '',
+      sender:
+        typeof v.sender === 'string'
+          ? v.sender
+          : typeof v.from === 'string'
+            ? v.from
+            : '',
+      receiver:
+        typeof v.receiver === 'string'
+          ? v.receiver
+          : typeof v.to === 'string'
+            ? v.to
+            : typeof v.personnel === 'string'
+              ? v.personnel
+              : '',
       action: typeof v.action === 'string' ? v.action : '',
       remarks: typeof v.remarks === 'string' ? v.remarks : '',
     }))
-    .filter((s) => s.personnel || s.action || s.remarks);
+    .filter((s) => s.sender || s.receiver || s.action || s.remarks);
 };
 
 const normalizeEntry = (value: unknown): EDATEntry => {
   if (!value || typeof value !== 'object') return { ...EMPTY_ENTRY };
   const v = value as Record<string, unknown>;
+  const dateReceived =
+    v.dateReceived instanceof Date
+      ? !Number.isNaN(v.dateReceived.getTime())
+        ? v.dateReceived.toISOString().slice(0, 10)
+        : null
+      : typeof v.dateReceived === 'string'
+        ? v.dateReceived.trim()
+          ? v.dateReceived.slice(0, 10)
+          : null
+        : null;
   return {
     id: typeof v.id === 'string' ? v.id : '',
     trackingNumber: typeof v.trackingNumber === 'string' ? v.trackingNumber : '',
@@ -103,9 +126,15 @@ const normalizeEntry = (value: unknown): EDATEntry => {
     section: typeof v.section === 'string' ? v.section : '',
     receiver: typeof v.receiver === 'string' ? v.receiver : '',
     actionTakenReceiver: typeof v.actionTakenReceiver === 'string' ? v.actionTakenReceiver : '',
-    timeReceived: typeof v.timeReceived === 'string' ? v.timeReceived.split('.')[0] : '',
-    dateReceived: typeof v.dateReceived === 'string' ? v.dateReceived.slice(0, 10) : '',
+    timeReceived: typeof v.timeReceived === 'string' ? v.timeReceived.split('.')[0] : null,
+    dateReceived,
     status: typeof v.status === 'string' ? v.status : 'Pending',
+    completed:
+      typeof v.completed === 'boolean'
+        ? v.completed
+        : typeof v.status === 'string'
+          ? v.status === 'Completed'
+          : Boolean(dateReceived),
   };
 };
 
@@ -134,7 +163,6 @@ export default function EntryDetailsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [activeEdit, setActiveEdit] = useState<FieldKey | null>(null);
-  const [routeDraft, setRouteDraft] = useState<EDATRouteStep>({ personnel: '', action: '', remarks: '' });
   const [currentTime, setCurrentTime] = useState(new Date());
   const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
   const [selectedAttachmentId, setSelectedAttachmentId] = useState<number | null>(null);
@@ -153,11 +181,6 @@ export default function EntryDetailsPage() {
         if (!response.ok) throw new Error('Failed to load entry');
         const data = await response.json();
         const normalized = normalizeEntry(data);
-        if (normalized.receiver.trim()) {
-          const { date, time } = getCurrentManilaDateTime();
-          if (!normalized.dateReceived) normalized.dateReceived = date;
-          if (!normalized.timeReceived) normalized.timeReceived = time;
-        }
         setEntry(normalized);
         setSavedEntry(normalized);
         setOriginalId(normalized.id || params.id);
@@ -206,19 +229,7 @@ export default function EntryDetailsPage() {
     loadAttachments();
   }, [params.id]);
 
-  useEffect(() => {
-    if (!entry.receiver.trim()) return;
-    if (entry.dateReceived && entry.timeReceived) return;
-    const { date, time } = getCurrentManilaDateTime();
-    setEntry((prev) => ({
-      ...prev,
-      dateReceived: prev.dateReceived || date,
-      timeReceived: prev.timeReceived || time,
-    }));
-  }, [entry.receiver, entry.dateReceived, entry.timeReceived]);
-
   const toggleEdit = (field: FieldKey) => {
-    setRouteDraft({ personnel: '', action: '', remarks: '' });
     setEntry((prev) => (activeEdit ? { ...savedEntry } : prev));
     setActiveEdit((prev) => (prev === field ? null : field));
   };
@@ -243,6 +254,14 @@ export default function EntryDetailsPage() {
           timeReceived: savedEntry.timeReceived,
         };
       }
+      if (field === 'completed') {
+        return {
+          ...prev,
+          completed: savedEntry.completed,
+          dateReceived: savedEntry.dateReceived,
+          timeReceived: savedEntry.timeReceived,
+        };
+      }
       if (field === 'trackingNumber') return { ...prev, trackingNumber: savedEntry.trackingNumber };
       if (field === 'edatsNumber') return { ...prev, edatsNumber: savedEntry.edatsNumber };
       if (field === 'dateForwarded') return { ...prev, dateForwarded: savedEntry.dateForwarded };
@@ -256,7 +275,6 @@ export default function EntryDetailsPage() {
 
   const cancelEdit = (field: FieldKey) => {
     restoreField(field);
-    setRouteDraft({ personnel: '', action: '', remarks: '' });
     setActiveEdit(null);
   };
 
@@ -310,21 +328,6 @@ export default function EntryDetailsPage() {
     minute: '2-digit',
     second: '2-digit',
   });
-
-  const addRouteStep = () => {
-    const next: EDATRouteStep = {
-      personnel: routeDraft.personnel.trim(),
-      action: routeDraft.action.trim(),
-      remarks: routeDraft.remarks.trim(),
-    };
-    if (!next.personnel) return;
-    setEntry((prev) => ({ ...prev, routeHistory: [...prev.routeHistory, next] }));
-    setRouteDraft({ personnel: '', action: '', remarks: '' });
-  };
-
-  const removeRouteStep = (index: number) => {
-    setEntry((prev) => ({ ...prev, routeHistory: prev.routeHistory.filter((_, i) => i !== index) }));
-  };
 
   const handleLogout = async () => {
     try {
@@ -506,6 +509,37 @@ export default function EntryDetailsPage() {
                 <input disabled={!isEditing('receiver')} value={entry.receiver} onChange={(e) => setField('receiver', e.target.value)} className={inputClass(isEditing('receiver'))} />
               </FieldRow>
 
+              <FieldRow label="Completed?" editing={isEditing('completed')} onToggle={() => toggleEdit('completed')} onCancel={() => cancelEdit('completed')} onSave={saveEntry} saving={saving}>
+                {isEditing('completed') ? (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <label className="flex items-center gap-2 text-sm text-emerald-900 dark:text-emerald-50">
+                      <input
+                        type="radio"
+                        name="completed"
+                        value="yes"
+                        checked={entry.completed === true}
+                        onChange={() => setField('completed', true)}
+                        className="accent-emerald-600"
+                      />
+                      <span>Yes</span>
+                    </label>
+                    <label className="flex items-center gap-2 text-sm text-emerald-900 dark:text-emerald-50">
+                      <input
+                        type="radio"
+                        name="completed"
+                        value="no"
+                        checked={entry.completed !== true}
+                        onChange={() => setEntry((prev) => ({ ...prev, completed: false, dateReceived: null, timeReceived: null }))}
+                        className="accent-emerald-600"
+                      />
+                      <span>No</span>
+                    </label>
+                  </div>
+                ) : (
+                  <div className="text-base text-emerald-800 dark:text-emerald-200">{entry.completed ? 'Yes' : 'No'}</div>
+                )}
+              </FieldRow>
+
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="p-3 sm:p-4 rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50/40 dark:bg-emerald-950/20">
                   <div className="text-sm sm:text-base font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400 mb-2">Time Received</div>
@@ -527,47 +561,42 @@ export default function EntryDetailsPage() {
             </div>
           </section>
 
-          <FieldRow label="Route History" editing={isEditing('routeHistory')} onToggle={() => toggleEdit('routeHistory')} onCancel={() => cancelEdit('routeHistory')} onSave={saveEntry} saving={saving}>
+          <FieldRow label="Log Entries" editing={isEditing('routeHistory')} onToggle={() => toggleEdit('routeHistory')} onCancel={() => cancelEdit('routeHistory')} onSave={saveEntry} saving={saving}>
             <div className="space-y-2">
-              {isEditing('routeHistory') ? (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 p-3 rounded-lg border border-emerald-200 dark:border-emerald-800">
-                  <input value={routeDraft.personnel} onChange={(e) => setRouteDraft((p) => ({ ...p, personnel: e.target.value }))} placeholder="Personnel" className={inputClass(true)} />
-                  <input value={routeDraft.action} onChange={(e) => setRouteDraft((p) => ({ ...p, action: e.target.value }))} placeholder="Action" className={inputClass(true)} />
-                  <textarea value={routeDraft.remarks} onChange={(e) => setRouteDraft((p) => ({ ...p, remarks: e.target.value }))} placeholder="Remarks" rows={2} className={`sm:col-span-2 ${inputClass(true)}`} />
-                  <button type="button" onClick={addRouteStep} className="sm:col-span-2 inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold">
-                    <Plus size={14} />
-                    Add Step
-                  </button>
-                </div>
-              ) : null}
+              <div className="grid grid-cols-1 gap-2 p-3 rounded-lg border border-emerald-200 dark:border-emerald-800">
+                <button
+                  type="button"
+                  onClick={() => router.push(`/edats/new?logId=${encodeURIComponent(entry.trackingNumber || params.id)}`)}
+                  className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold"
+                >
+                  <Plus size={14} />
+                  Add Step
+                </button>
+              </div>
 
               {entry.routeHistory.length === 0 ? (
-                <div className="text-base text-emerald-600 dark:text-emerald-400 italic">No route steps.</div>
+                <div className="text-base text-emerald-600 dark:text-emerald-400 italic">No entries for this log.</div>
               ) : (
                 <div className="relative overflow-x-auto">
                   <div className="min-w-max px-2 pb-1">
                     <div className="relative flex items-start gap-6 pt-2">
                       <div className="absolute left-0 right-0 top-5 h-px bg-emerald-200 dark:bg-emerald-800" />
                       {entry.routeHistory.map((step, index) => (
-                        <div key={`${step.personnel}-${index}`} className="relative w-[280px] shrink-0 pt-10">
+                        <div key={`${step.sender}-${step.receiver}-${index}`} className="relative w-[280px] shrink-0 pt-10">
                           <div className="absolute left-1/2 -translate-x-1/2 top-2 w-6 h-6 rounded-full bg-emerald-600 dark:bg-emerald-700 text-white flex items-center justify-center text-[11px] font-extrabold">
                             {index + 1}
                           </div>
                           <div className="rounded-xl border border-emerald-200 dark:border-emerald-800 bg-white dark:bg-emerald-950/20 p-4">
                             <div className="flex items-start justify-between gap-3">
                               <div className="min-w-0">
-                                <div className="font-semibold text-emerald-900 dark:text-emerald-50 truncate">{step.personnel}</div>
+                                <div className="font-semibold text-emerald-900 dark:text-emerald-50 truncate">{step.receiver}</div>
+                                <div className="mt-1 text-[11px] font-mono text-emerald-700/70 dark:text-emerald-300/70 truncate">{step.sender}</div>
                                 {step.action ? (
                                   <div className="mt-1 inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
                                     {step.action}
                                   </div>
                                 ) : null}
                               </div>
-                              {isEditing('routeHistory') ? (
-                                <button type="button" onClick={() => removeRouteStep(index)} className="shrink-0 p-2 rounded-lg text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20" title="Remove step">
-                                  <Trash2 size={14} />
-                                </button>
-                              ) : null}
                             </div>
                             {step.remarks ? (
                               <div className="mt-2 text-sm text-emerald-700/80 dark:text-emerald-300/80 whitespace-pre-wrap">
@@ -669,13 +698,11 @@ export default function EntryDetailsPage() {
                           />
                         ) : isImage ? (
                           <div className="w-full h-[520px] rounded-xl border border-emerald-200 dark:border-emerald-800 bg-white/60 dark:bg-emerald-950/10 overflow-hidden relative">
-                            <Image
+                            <img
                               src={selectedAttachment.url}
                               alt={selectedAttachment.originalName || selectedAttachment.name}
-                              fill
-                              sizes="(max-width: 1024px) 100vw, 66vw"
-                              className="object-contain"
-                              priority={false}
+                              className="absolute inset-0 w-full h-full object-contain"
+                              loading="lazy"
                             />
                           </div>
                         ) : (

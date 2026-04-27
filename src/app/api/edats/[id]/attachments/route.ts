@@ -46,6 +46,23 @@ const safeFileName = (name: string) =>
     .replace(/\s+/g, ' ')
     .trim();
 
+const inferMimeType = (name: string) => {
+  const ext = name.split('.').pop()?.toLowerCase() ?? '';
+  if (ext === 'pdf') return 'application/pdf';
+  if (ext === 'doc') return 'application/msword';
+  if (ext === 'docx') return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+  if (ext === 'xls') return 'application/vnd.ms-excel';
+  if (ext === 'xlsx') return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+  if (ext === 'ppt') return 'application/vnd.ms-powerpoint';
+  if (ext === 'pptx') return 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
+  if (ext === 'txt') return 'text/plain';
+  if (ext === 'png') return 'image/png';
+  if (ext === 'jpg' || ext === 'jpeg') return 'image/jpeg';
+  if (ext === 'gif') return 'image/gif';
+  if (ext === 'webp') return 'image/webp';
+  return '';
+};
+
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -122,11 +139,12 @@ export async function POST(
       await writeFile(path.join(dir, finalName), bytes);
 
       const url = `/uploads/edats/${encodeURIComponent(id)}/${encodeURIComponent(finalName)}`;
+      const type = file.type || inferMimeType(file.name);
       saved.push({
         name: finalName,
         originalName: file.name,
         size: file.size,
-        type: file.type,
+        type,
         url,
         content: bytes,
       });

@@ -97,13 +97,19 @@ const normalizeRouteHistory = (value: unknown): EDATEntry['routeHistory'] => {
     return value
       .filter((v): v is Record<string, unknown> => typeof v === 'object' && v !== null)
       .map((v): EDATRouteStep => ({
-        personnel:
-          typeof v.personnel === 'string'
-            ? v.personnel
+        sender:
+          typeof v.sender === 'string'
+            ? v.sender
+            : typeof v.from === 'string'
+              ? v.from
+              : '',
+        receiver:
+          typeof v.receiver === 'string'
+            ? v.receiver
             : typeof v.to === 'string'
               ? v.to
-              : typeof v.from === 'string'
-                ? v.from
+              : typeof v.personnel === 'string'
+                ? v.personnel
                 : '',
         action: typeof v.action === 'string' ? v.action : '',
         remarks:
@@ -113,7 +119,7 @@ const normalizeRouteHistory = (value: unknown): EDATEntry['routeHistory'] => {
               ? `${typeof v.date === 'string' ? v.date : ''} ${typeof v.time === 'string' ? v.time : ''}`.trim()
               : '',
       }))
-      .filter((v) => v.personnel || v.action || v.remarks);
+      .filter((v) => v.sender || v.receiver || v.action || v.remarks);
   }
   if (typeof value !== 'string') return [];
   const trimmed = value.trim();
@@ -137,6 +143,7 @@ const normalizeEntryForForm = (entry: EDATEntry): Omit<EDATEntry, 'id'> => ({
   actionRequired: normalizeActionRequiredForCheckboxes(entry.actionRequired),
   dueIn: normalizeDueInForRadio(entry.dueIn),
   routeHistory: normalizeRouteHistory(entry.routeHistory),
+  section: entry.section ?? '',
   receiver: entry.receiver ?? '',
   actionTakenReceiver: entry.actionTakenReceiver ?? '',
   timeReceived: normalizeTimeForInput(entry.timeReceived),
@@ -154,6 +161,7 @@ const initialFormState: Omit<EDATEntry, 'id'> = {
   actionRequired: [],
   dueIn: 'simple',
   routeHistory: [],
+  section: '',
   receiver: '',
   actionTakenReceiver: '',
   timeReceived: '',
@@ -165,8 +173,8 @@ export default function EDATModal({ isOpen, onClose, onSubmit, entry }: EDATModa
     entry ? normalizeEntryForForm(entry) : { ...initialFormState }
   );
   const [generatedIds, setGeneratedIds] = useState<{ trackingNumber: string; edatsNumber: string } | null>(null);
-  const [routeDraft, setRouteDraft] = useState<EDATRouteStep>({
-    personnel: '',
+  const [routeDraft, setRouteDraft] = useState<{ receiver: string; action: string; remarks: string }>({
+    receiver: '',
     action: '',
     remarks: '',
   });
@@ -218,20 +226,19 @@ export default function EDATModal({ isOpen, onClose, onSubmit, entry }: EDATModa
     onClose();
   };
 
-  const handleRouteDraftChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-    const { name, value } = e.target;
-    setRouteDraft((prev) => ({ ...prev, [name]: value }));
-  };
-
   const addRouteStep = () => {
+    const history = formData.routeHistory ?? [];
+    const lastReceiver = history[history.length - 1]?.receiver ?? '';
+    const computedSender = (lastReceiver || formData.sender || '').trim();
     const next: EDATRouteStep = {
-      personnel: routeDraft.personnel.trim(),
+      sender: computedSender,
+      receiver: routeDraft.receiver.trim(),
       action: routeDraft.action.trim(),
       remarks: routeDraft.remarks.trim(),
     };
-    if (!next.personnel) return;
+    if (!next.sender || !next.receiver) return;
     setFormData((prev) => ({ ...prev, routeHistory: [...(prev.routeHistory ?? []), next] }));
-    setRouteDraft((prev) => ({ ...prev, action: '', remarks: '' }));
+    setRouteDraft({ receiver: '', action: '', remarks: '' });
   };
 
   const removeRouteStep = (index: number) => {
@@ -338,48 +345,58 @@ export default function EDATModal({ isOpen, onClose, onSubmit, entry }: EDATModa
 
           <div className="space-y-3">
             <div className="flex items-center justify-between">
-              <label className="block text-xs sm:text-sm lg:text-base font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-wider">Route History</label>
+              <label className="block text-xs sm:text-sm lg:text-base font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-wider">Log Entries</label>
               <button
                 type="button"
                 onClick={addRouteStep}
                 className="px-4 py-2 text-xs sm:text-sm font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition-colors"
               >
-                Add Step
+                Add Entry
               </button>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="sm:col-span-2">
-                <label className="block text-[11px] font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider mb-1">Personnel</label>
-                <input type="text" name="personnel" value={routeDraft.personnel} onChange={handleRouteDraftChange} className="w-full p-2.5 text-sm border border-emerald-200 dark:border-emerald-800 rounded-lg bg-white dark:bg-emerald-950/30 text-emerald-900 dark:text-emerald-50 outline-none placeholder:text-gray-400 dark:placeholder:text-emerald-600/50" />
+                <label className="block text-[11px] font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider mb-1">Sender</label>
+                <input
+                  type="text"
+                  value={(formData.routeHistory[formData.routeHistory.length - 1]?.receiver ?? formData.sender ?? '').trim()}
+                  readOnly
+                  className="w-full p-2.5 text-sm border border-emerald-200 dark:border-emerald-800 rounded-lg bg-emerald-50/70 dark:bg-emerald-950/40 text-emerald-900 dark:text-emerald-50 outline-none"
+                />
               </div>
               <div className="sm:col-span-2">
-                <label className="block text-[11px] font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider mb-1">Action</label>
-                <input type="text" name="action" value={routeDraft.action} onChange={handleRouteDraftChange} className="w-full p-2.5 text-sm border border-emerald-200 dark:border-emerald-800 rounded-lg bg-white dark:bg-emerald-950/30 text-emerald-900 dark:text-emerald-50 outline-none placeholder:text-gray-400 dark:placeholder:text-emerald-600/50" />
+                <label className="block text-[11px] font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider mb-1">Receiver</label>
+                <input type="text" value={routeDraft.receiver} onChange={(e) => setRouteDraft((p) => ({ ...p, receiver: e.target.value }))} className="w-full p-2.5 text-sm border border-emerald-200 dark:border-emerald-800 rounded-lg bg-white dark:bg-emerald-950/30 text-emerald-900 dark:text-emerald-50 outline-none placeholder:text-gray-400 dark:placeholder:text-emerald-600/50" />
+              </div>
+              <div className="sm:col-span-2">
+                <label className="block text-[11px] font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider mb-1">Action (optional)</label>
+                <input type="text" value={routeDraft.action} onChange={(e) => setRouteDraft((p) => ({ ...p, action: e.target.value }))} className="w-full p-2.5 text-sm border border-emerald-200 dark:border-emerald-800 rounded-lg bg-white dark:bg-emerald-950/30 text-emerald-900 dark:text-emerald-50 outline-none placeholder:text-gray-400 dark:placeholder:text-emerald-600/50" />
               </div>
               <div className="sm:col-span-2">
                 <label className="block text-[11px] font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider mb-1">Remarks</label>
-                <textarea name="remarks" value={routeDraft.remarks} onChange={handleRouteDraftChange} rows={2} className="w-full p-2.5 text-sm border border-emerald-200 dark:border-emerald-800 rounded-lg bg-white dark:bg-emerald-950/30 text-emerald-900 dark:text-emerald-50 outline-none placeholder:text-gray-400 dark:placeholder:text-emerald-600/50" />
+                <textarea value={routeDraft.remarks} onChange={(e) => setRouteDraft((p) => ({ ...p, remarks: e.target.value }))} rows={2} className="w-full p-2.5 text-sm border border-emerald-200 dark:border-emerald-800 rounded-lg bg-white dark:bg-emerald-950/30 text-emerald-900 dark:text-emerald-50 outline-none placeholder:text-gray-400 dark:placeholder:text-emerald-600/50" />
               </div>
             </div>
 
             <div className="space-y-2">
               {formData.routeHistory.length === 0 ? (
-                <div className="text-sm text-emerald-600/70 dark:text-emerald-300/60 italic">No route steps yet.</div>
+                <div className="text-sm text-emerald-600/70 dark:text-emerald-300/60 italic">No entries yet for this log.</div>
               ) : (
                 <div className="relative overflow-x-auto">
                   <div className="min-w-max px-2 pb-1">
                     <div className="relative flex items-start gap-6 pt-2">
                       <div className="absolute left-0 right-0 top-5 h-px bg-emerald-200 dark:bg-emerald-800" />
                       {formData.routeHistory.map((step, index) => (
-                        <div key={`${step.personnel}-${index}`} className="relative w-[280px] shrink-0 pt-10">
+                        <div key={`${step.sender}-${step.receiver}-${index}`} className="relative w-[280px] shrink-0 pt-10">
                           <div className="absolute left-1/2 -translate-x-1/2 top-2 w-6 h-6 rounded-full bg-emerald-600 dark:bg-emerald-700 text-white flex items-center justify-center text-[11px] font-extrabold">
                             {index + 1}
                           </div>
                           <div className="rounded-xl border border-emerald-200 dark:border-emerald-800 bg-white dark:bg-emerald-950/20 p-4">
                             <div className="flex items-start justify-between gap-3">
                               <div className="min-w-0">
-                                <div className="font-semibold text-emerald-900 dark:text-emerald-50 truncate">{step.personnel}</div>
+                                <div className="font-semibold text-emerald-900 dark:text-emerald-50 truncate">{step.receiver}</div>
+                                <div className="mt-1 text-[11px] font-mono text-emerald-700/70 dark:text-emerald-300/70 truncate">{step.sender}</div>
                                 {step.action ? (
                                   <div className="mt-1 inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
                                     {step.action}
@@ -408,11 +425,11 @@ export default function EDATModal({ isOpen, onClose, onSubmit, entry }: EDATModa
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-5 lg:gap-6">
             <div>
               <label className="block text-xs sm:text-sm lg:text-base font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-wider mb-1.5">Time Received</label>
-              <input type="time" name="timeReceived" value={formData.timeReceived} onChange={handleChange} className="w-full p-2.5 sm:p-3 lg:p-4 text-sm lg:text-base border border-emerald-200 dark:border-emerald-800 rounded-lg bg-white dark:bg-emerald-950/30 text-emerald-900 dark:text-emerald-50 focus:ring-2 focus:ring-emerald-500 outline-none transition-all" />
+              <input type="time" name="timeReceived" value={formData.timeReceived || ''} onChange={handleChange} className="w-full p-2.5 sm:p-3 lg:p-4 text-sm lg:text-base border border-emerald-200 dark:border-emerald-800 rounded-lg bg-white dark:bg-emerald-950/30 text-emerald-900 dark:text-emerald-50 focus:ring-2 focus:ring-emerald-500 outline-none transition-all" />
             </div>
             <div>
               <label className="block text-xs sm:text-sm lg:text-base font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-wider mb-1.5">Date Received</label>
-              <input type="date" name="dateReceived" value={formData.dateReceived} onChange={handleChange} className="w-full p-2.5 sm:p-3 lg:p-4 text-sm lg:text-base border border-emerald-200 dark:border-emerald-800 rounded-lg bg-white dark:bg-emerald-950/30 text-emerald-900 dark:text-emerald-50 focus:ring-2 focus:ring-emerald-500 outline-none transition-all" />
+              <input type="date" name="dateReceived" value={formData.dateReceived || ''} onChange={handleChange} className="w-full p-2.5 sm:p-3 lg:p-4 text-sm lg:text-base border border-emerald-200 dark:border-emerald-800 rounded-lg bg-white dark:bg-emerald-950/30 text-emerald-900 dark:text-emerald-50 focus:ring-2 focus:ring-emerald-500 outline-none transition-all" />
             </div>
           </div>
 

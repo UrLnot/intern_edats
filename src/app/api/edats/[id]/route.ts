@@ -20,6 +20,15 @@ type LogRow = RowDataPacket & {
   status: string;
 };
 
+type RouteEntryRow = RowDataPacket & {
+  tracking_number: string;
+  step_index: number;
+  sender: string | null;
+  receiver: string | null;
+  action: string | null;
+  remarks: string | null;
+};
+
 const normalizeDueIn = (value: unknown): 'simple' | 'technical' | 'highlyTechnical' =>
   value === 'technical' || value === 'highlyTechnical' ? value : 'simple';
 
@@ -40,9 +49,8 @@ const getManilaTimeHHMMSS = (date: Date): string =>
     hour12: false,
   }).format(date);
 
-const computeStatus = (input: { receiver?: unknown; dateForwarded?: unknown; dueIn?: unknown }): 'Completed' | 'Pending' | 'Passed Due' => {
-  const receiver = typeof input.receiver === 'string' ? input.receiver.trim() : '';
-  if (receiver) return 'Completed';
+const computeStatus = (input: { completed?: unknown; dateForwarded?: unknown; dueIn?: unknown }): 'Completed' | 'Pending' | 'Passed Due' => {
+  if (input.completed === true) return 'Completed';
 
   const dueIn = normalizeDueIn(input.dueIn);
   const days = dueIn === 'technical' ? 7 : dueIn === 'highlyTechnical' ? 20 : 3;
@@ -87,18 +95,26 @@ const parseActionRequired = (value: unknown): string[] => {
     .filter(Boolean);
 };
 
-const parseRouteHistory = (value: unknown): Array<{ personnel: string; action: string; remarks: string }> => {
+const parseRouteHistory = (
+  value: unknown
+): Array<{ sender: string; receiver: string; action: string; remarks: string }> => {
   if (Array.isArray(value)) {
     return value
       .filter((v): v is Record<string, unknown> => typeof v === 'object' && v !== null)
       .map((v) => ({
-        personnel:
-          typeof v.personnel === 'string'
-            ? v.personnel
+        sender:
+          typeof v.sender === 'string'
+            ? v.sender
+            : typeof v.from === 'string'
+              ? v.from
+              : '',
+        receiver:
+          typeof v.receiver === 'string'
+            ? v.receiver
             : typeof v.to === 'string'
               ? v.to
-              : typeof v.from === 'string'
-                ? v.from
+              : typeof v.personnel === 'string'
+                ? v.personnel
                 : '',
         action: typeof v.action === 'string' ? v.action : '',
         remarks:
@@ -108,7 +124,14 @@ const parseRouteHistory = (value: unknown): Array<{ personnel: string; action: s
               ? `${typeof v.date === 'string' ? v.date : ''} ${typeof v.time === 'string' ? v.time : ''}`.trim()
               : '',
       }))
-      .filter((v) => v.personnel || v.action || v.remarks);
+      .filter((v) => v.sender || v.receiver || v.action || v.remarks)
+      .map((v) => ({
+        sender: typeof v.sender === 'string' ? v.sender.trim() : '',
+        receiver: typeof v.receiver === 'string' ? v.receiver.trim() : '',
+        action: typeof v.action === 'string' ? v.action.trim() : '',
+        remarks: typeof v.remarks === 'string' ? v.remarks.trim() : '',
+      }))
+      .filter((v) => v.sender || v.receiver || v.action || v.remarks);
   }
   if (typeof value !== 'string') return [];
   const trimmed = value.trim();
@@ -120,17 +143,65 @@ const parseRouteHistory = (value: unknown): Array<{ personnel: string; action: s
   }
 };
 
-const updateRouteHistoryTx = async (
+const ensureLogEntriesTable = async (conn: { query: (sql: string, values?: unknown[]) => Promise<unknown> }) => {
+  await conn.query(`
+    CREATE TABLE IF NOT EXISTS edats_log_entries (
+      tracking_number VARCHAR(64) NOT NULL,
+      step_index INT NOT NULL,
+      sender VARCHAR(255) NOT NULL DEFAULT '',
+      receiver VARCHAR(255) NOT NULL DEFAULT '',
+      action VARCHAR(255) NOT NULL DEFAULT '',
+      remarks TEXT NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (tracking_number, step_index),
+      INDEX idx_edats_log_entries_tracking_number (tracking_number)
+    )
+  `);
+};
+
+const parseRouteEntriesRows = (rows: Array<RouteEntryRow>): Array<{ sender: string; receiver: string; action: string; remarks: string }> =>
+  rows
+    .map((row) => ({
+      sender: typeof row.sender === 'string' ? row.sender.trim() : '',
+      receiver: typeof row.receiver === 'string' ? row.receiver.trim() : '',
+      action: typeof row.action === 'string' ? row.action.trim() : '',
+      remarks: typeof row.remarks === 'string' ? row.remarks.trim() : '',
+    }))
+    .filter((s) => s.sender || s.receiver || s.action || s.remarks);
+
+const writeRouteEntriesTx = async (
+  conn: { query: (sql: string, values?: unknown[]) => Promise<unknown> },
+  trackingNumber: string,
+  value: unknown
+) => {
+  const steps = parseRouteHistory(value);
+  await ensureLogEntriesTable(conn);
+  await conn.query('DELETE FROM edats_log_entries WHERE tracking_number = ?', [trackingNumber]);
+  if (steps.length === 0) return;
+  const placeholders = steps.map(() => '(?, ?, ?, ?, ?, ?)').join(', ');
+  const values: unknown[] = [];
+  steps.forEach((step, idx) => {
+    values.push(trackingNumber, idx + 1, step.sender, step.receiver, step.action, step.remarks);
+  });
+  await conn.query(
+    `INSERT INTO edats_log_entries (tracking_number, step_index, sender, receiver, action, remarks) VALUES ${placeholders}`,
+    values
+  );
+};
+
+const syncLegacyRouteHistoryTx = async (
   conn: { query: (sql: string, values?: unknown[]) => Promise<unknown> },
   trackingNumber: string,
   value: unknown
 ) => {
   const steps = parseRouteHistory(value);
   const json = steps.length ? JSON.stringify(steps) : '';
-  await conn.query(
-    'INSERT INTO edats_route_history (tracking_number, history) VALUES (?, ?) ON DUPLICATE KEY UPDATE history = VALUES(history)',
-    [trackingNumber, json]
-  );
+  try {
+    await conn.query(
+      'INSERT INTO edats_route_history (tracking_number, history) VALUES (?, ?) ON DUPLICATE KEY UPDATE history = VALUES(history)',
+      [trackingNumber, json]
+    );
+  } catch {}
 };
 
 export async function GET(
@@ -145,22 +216,45 @@ export async function GET(
       return NextResponse.json({ error: 'Entry not found' }, { status: 404 });
     }
 
-    let routeHistory: Array<{ personnel: string; action: string; remarks: string }> = [];
+    let routeHistory: Array<{ sender: string; receiver: string; action: string; remarks: string }> = [];
     try {
-      const [routeRows] = await pool.query<Array<RowDataPacket & { history: string }>>(
-        'SELECT history FROM edats_route_history WHERE tracking_number = ? LIMIT 1',
+      await ensureLogEntriesTable(pool);
+      const [entryRows] = await pool.query<RouteEntryRow[]>(
+        `SELECT tracking_number, step_index, sender, receiver, action, remarks
+         FROM edats_log_entries
+         WHERE tracking_number = ?
+         ORDER BY step_index ASC`,
         [id]
       );
-      if (routeRows[0]) {
-        routeHistory = parseRouteHistory(routeRows[0].history);
+      routeHistory = parseRouteEntriesRows(entryRows);
+    } catch {}
+
+    try {
+      if (routeHistory.length === 0) {
+        const [routeRows] = await pool.query<Array<RowDataPacket & { history: string }>>(
+          'SELECT history FROM edats_route_history WHERE tracking_number = ? LIMIT 1',
+          [id]
+        );
+        if (routeRows[0]) {
+          routeHistory = parseRouteHistory(routeRows[0].history);
+        }
       }
     } catch {}
+
+    const completed = Boolean(
+      row.date_received &&
+        (row.date_received instanceof Date
+          ? !Number.isNaN(row.date_received.getTime())
+          : typeof row.date_received === 'string'
+            ? row.date_received.trim() && row.date_received !== '0000-00-00'
+            : false)
+    );
 
     return NextResponse.json({
       id: row.tracking_number,
       trackingNumber: row.tracking_number,
       edatsNumber: row.edats_number,
-      status: computeStatus({ receiver: row.receiver, dateForwarded: row.date_forwarded, dueIn: row.due_in }),
+      status: computeStatus({ completed, dateForwarded: row.date_forwarded, dueIn: row.due_in }),
       dateForwarded: row.date_forwarded,
       sender: row.sender,
       subject: row.subject,
@@ -173,6 +267,7 @@ export async function GET(
       actionTakenReceiver: row.action_taken_receiver,
       timeReceived: row.time_received,
       dateReceived: row.date_received,
+      completed,
     });
   } catch (error) {
     console.error('Failed to fetch entry:', error);
@@ -195,35 +290,36 @@ export async function PUT(
       const receiver = typeof data.receiver === 'string' ? data.receiver.trim() : '';
       const dateForwarded = data.dateForwarded ? new Date(data.dateForwarded).toISOString().split('T')[0] : null;
       const dueIn = normalizeDueIn(data.dueIn);
-      const status = computeStatus({ receiver, dateForwarded, dueIn });
+      const completedFlag = typeof data.completed === 'boolean' ? data.completed : undefined;
 
-      let timeReceivedToSet: string | null = null;
-      let dateReceivedToSet: string | null = null;
-      if (receiver) {
-        const [existingRows] = await conn.query<Array<RowDataPacket & { time_received: string | null; date_received: string | Date | null }>>(
-          'SELECT time_received, date_received FROM edats_logs WHERE tracking_number = ? LIMIT 1 FOR UPDATE',
-          [id]
-        );
-        const existing = existingRows[0];
-        const existingDateObj =
-          existing?.date_received instanceof Date
-            ? existing.date_received
-            : typeof existing?.date_received === 'string'
-              ? new Date(existing.date_received)
-              : null;
-        const existingDate = existingDateObj ? existingDateObj.toISOString().split('T')[0] : null;
-        const existingTime =
-          typeof existing?.time_received === 'string' ? existing.time_received.split('.')[0] : null;
+      const [existingRows] = await conn.query<Array<RowDataPacket & { time_received: string | null; date_received: string | Date | null }>>(
+        'SELECT time_received, date_received FROM edats_logs WHERE tracking_number = ? LIMIT 1 FOR UPDATE',
+        [id]
+      );
+      const existing = existingRows[0];
+      const existingDateObj =
+        existing?.date_received instanceof Date
+          ? existing.date_received
+          : typeof existing?.date_received === 'string'
+            ? new Date(existing.date_received)
+            : null;
+      const existingDate = existingDateObj ? existingDateObj.toISOString().split('T')[0] : null;
+      const existingTime = typeof existing?.time_received === 'string' ? existing.time_received.split('.')[0] : null;
 
-        if (existingDate && existingTime) {
-          dateReceivedToSet = existingDate;
-          timeReceivedToSet = existingTime;
-        } else {
-          const now = new Date();
-          dateReceivedToSet = getManilaDateYYYYMMDD(now);
-          timeReceivedToSet = getManilaTimeHHMMSS(now);
-        }
+      let dateReceivedToSet: string | null = existingDate;
+      let timeReceivedToSet: string | null = existingTime;
+      if (completedFlag === false) {
+        dateReceivedToSet = null;
+        timeReceivedToSet = null;
       }
+      if (completedFlag === true && (!existingDate || !existingTime)) {
+        const now = new Date();
+        dateReceivedToSet = getManilaDateYYYYMMDD(now);
+        timeReceivedToSet = getManilaTimeHHMMSS(now);
+      }
+
+      const completedAfter = Boolean(dateReceivedToSet && dateReceivedToSet !== '0000-00-00');
+      const status = computeStatus({ completed: completedAfter, dateForwarded, dueIn });
 
       const setParts: string[] = [
         'tracking_number = ?',
@@ -282,9 +378,11 @@ export async function PUT(
         const newTrackingNumber = typeof data.trackingNumber === 'string' ? data.trackingNumber : id;
         
         if (oldTrackingNumber !== newTrackingNumber) {
+          await conn.query('DELETE FROM edats_log_entries WHERE tracking_number = ?', [oldTrackingNumber]);
           await conn.query('DELETE FROM edats_route_history WHERE tracking_number = ?', [oldTrackingNumber]);
         }
-        await updateRouteHistoryTx(conn, newTrackingNumber, data.routeHistory);
+        await writeRouteEntriesTx(conn, newTrackingNumber, data.routeHistory);
+        await syncLegacyRouteHistoryTx(conn, newTrackingNumber, data.routeHistory);
       }
 
       await conn.commit();
@@ -307,6 +405,9 @@ export async function DELETE(
 ) {
   try {
     const { id } = await params;
+    try {
+      await pool.query('DELETE FROM edats_log_entries WHERE tracking_number = ?', [id]);
+    } catch {}
     try {
       await pool.query('DELETE FROM edats_route_history WHERE tracking_number = ?', [id]);
     } catch {}

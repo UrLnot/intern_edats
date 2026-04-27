@@ -167,19 +167,20 @@ export default function EDATViewModal({ isOpen, onClose, entry }: EDATViewModalP
 
               <div className="space-y-6 p-6 bg-emerald-50/30 dark:bg-emerald-950/20 rounded-2xl border border-emerald-100/50 dark:border-emerald-800/30">
                 <h4 className="text-sm font-black text-emerald-900 dark:text-emerald-50 uppercase tracking-[0.2em] border-l-4 border-emerald-500 pl-3">
-                  Route History
+                  Log Entries
                 </h4>
                 {routeHistory.length === 0 ? (
-                  <div className="pl-4 text-sm text-emerald-600/70 dark:text-emerald-300/60 italic">No route steps yet.</div>
+                  <div className="pl-4 text-sm text-emerald-600/70 dark:text-emerald-300/60 italic">No entries yet for this log.</div>
                 ) : (
                   <div className="space-y-3 pl-4">
                     {routeHistory.map((step, index) => (
-                      <div key={`${step.personnel}-${index}`} className="p-4 border border-emerald-200 dark:border-emerald-800 rounded-xl bg-white dark:bg-emerald-950/30">
+                      <div key={`${step.sender}-${step.receiver}-${index}`} className="p-4 border border-emerald-200 dark:border-emerald-800 rounded-xl bg-white dark:bg-emerald-950/30">
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <div className="text-sm lg:text-base font-bold text-emerald-900 dark:text-emerald-50">
-                            {step.personnel}
+                            {step.receiver}
                           </div>
                         </div>
+                        {step.sender ? <div className="mt-1 text-[11px] font-mono text-emerald-700/80 dark:text-emerald-300/80">{step.sender}</div> : null}
                         {step.action ? <div className="mt-2 text-sm text-emerald-800 dark:text-emerald-200">{step.action}</div> : null}
                         {step.remarks ? <div className="mt-1 text-sm text-emerald-700/80 dark:text-emerald-300/80">{step.remarks}</div> : null}
                       </div>

@@ -42,7 +42,13 @@ export default function EDATCards({ entries, onDelete, onView, highlightedId }: 
           <div
             id={`card-${entry.id}`}
             key={entry.id}
-            className={`group relative flex flex-col h-full bg-white/70 dark:bg-emerald-900/30 backdrop-blur-xl border border-emerald-200/50 dark:border-emerald-800/50 rounded-2xl overflow-hidden transition-all hover:shadow-2xl hover:-translate-y-1 hover:ring-2 hover:ring-emerald-300/60 active:scale-[0.99] ${
+            role="button"
+            tabIndex={0}
+            onClick={() => onView(entry)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') onView(entry);
+            }}
+            className={`group relative flex flex-col h-full bg-white/70 dark:bg-emerald-900/30 backdrop-blur-xl border border-emerald-200/50 dark:border-emerald-800/50 rounded-2xl overflow-hidden transition-all cursor-pointer hover:shadow-2xl hover:-translate-y-1 hover:ring-2 hover:ring-emerald-300/60 active:scale-[0.99] ${
               highlighted ? 'ring-4 ring-emerald-400 shadow-2xl animate-pulse' : ''
             }`}
           >
@@ -128,7 +134,7 @@ export default function EDATCards({ entries, onDelete, onView, highlightedId }: 
             <div className="mt-1">
               <div className="flex items-center gap-1.5 mb-3">
                 <GitCommit size={12} className="text-emerald-500" />
-                <span className="text-[10px] font-black uppercase tracking-wider text-emerald-600/60 dark:text-emerald-400/60">Route History</span>
+                <span className="text-[10px] font-black uppercase tracking-wider text-emerald-600/60 dark:text-emerald-400/60">Log Entries</span>
               </div>
               {entry.routeHistory && entry.routeHistory.length > 0 ? (
                 <div className="relative grid grid-cols-3 gap-y-6 gap-x-2 px-1">
@@ -173,14 +179,15 @@ export default function EDATCards({ entries, onDelete, onView, highlightedId }: 
                             </>
                           )}
 
-                          <span className="text-[9px] font-bold text-emerald-800 dark:text-emerald-200 text-center truncate w-full px-1" title={step.personnel}>
-                            {step.personnel}
+                          <span
+                            className="text-[9px] font-bold text-emerald-800 dark:text-emerald-200 text-center truncate w-full px-1"
+                            title={`${step.sender} → ${step.receiver}`.trim()}
+                          >
+                            {step.receiver}
                           </span>
-                          {step.action && (
-                            <span className="text-[8px] text-emerald-600/70 dark:text-emerald-400/70 text-center truncate w-full px-1 italic">
-                              {step.action}
-                            </span>
-                          )}
+                          <span className="text-[8px] text-emerald-600/70 dark:text-emerald-400/70 text-center truncate w-full px-1 italic">
+                            {step.action || step.sender}
+                          </span>
                         </div>
                       );
                     });
@@ -193,7 +200,7 @@ export default function EDATCards({ entries, onDelete, onView, highlightedId }: 
                   )}
                 </div>
               ) : (
-                <p className="text-[10px] italic text-emerald-400/50 dark:text-emerald-600/40 pl-3.5">No routing history recorded.</p>
+                <p className="text-[10px] italic text-emerald-400/50 dark:text-emerald-600/40 pl-3.5">No entries recorded for this log.</p>
               )}
             </div>
           </div>
@@ -208,14 +215,20 @@ export default function EDATCards({ entries, onDelete, onView, highlightedId }: 
             </div>
             <div className="flex gap-2">
               <button 
-                onClick={() => onView(entry)} 
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onView(entry);
+                }}
                 className="p-2 text-blue-500 hover:bg-blue-100 dark:hover:bg-blue-500/20 rounded-xl transition-all"
                 title="View Details"
               >
                 <Eye size={18} />
               </button>
               <button 
-                onClick={() => onDelete(entry.id)} 
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDelete(entry.id);
+                }}
                 className="p-2 text-red-400 hover:bg-red-100 dark:hover:bg-red-500/20 rounded-xl transition-all"
                 title="Delete Entry"
               >

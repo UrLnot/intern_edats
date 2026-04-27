@@ -1,5 +1,6 @@
 export interface EDATRouteStep {
-  personnel: string;
+  sender: string;
+  receiver: string;
   action: string;
   remarks: string;
 }
@@ -18,7 +19,8 @@ export interface EDATEntry {
   section: string;
   receiver: string;
   actionTakenReceiver: string;
-  timeReceived: string;
-  dateReceived: string; // ISO string or Date string
+  timeReceived: string | null;
+  dateReceived: string | null; // ISO string or Date string
   status: string;
+  completed?: boolean;
 }

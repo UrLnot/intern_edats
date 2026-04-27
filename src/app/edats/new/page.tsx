@@ -1,10 +1,10 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
-import { EDATEntry, EDATRouteStep } from '@/types/edat';
+import React, { Suspense, useEffect, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { EDATEntry } from '@/types/edat';
 import ThemeToggle from '@/components/ThemeToggle';
-import { ArrowLeft, LogOut, Paperclip, Plus, Trash2, Trees, X } from 'lucide-react';
+import { ArrowLeft, LogOut, Paperclip, Trees, X } from 'lucide-react';
 
 const ACTION_REQUIRED_OPTIONS = [
   'For appropriate action',
@@ -54,13 +54,13 @@ const EMPTY_ENTRY: Omit<EDATEntry, 'id'> = {
   section: '',
   receiver: '',
   actionTakenReceiver: '',
-  timeReceived: '',
-  dateReceived: '',
+  timeReceived: null,
+  dateReceived: null,
   status: 'Pending',
 };
 
-const computeStatus = (input: { receiver?: string; dateForwarded?: string; dueIn?: EDATEntry['dueIn'] }): 'Completed' | 'Pending' | 'Passed Due' => {
-  if ((input.receiver || '').trim()) return 'Completed';
+const computeStatus = (input: { completed?: boolean; dateForwarded?: string; dueIn?: EDATEntry['dueIn'] }): 'Completed' | 'Pending' | 'Passed Due' => {
+  if (input.completed) return 'Completed';
   const dueIn = input.dueIn ?? 'simple';
   const days = dueIn === 'technical' ? 7 : dueIn === 'highlyTechnical' ? 20 : 3;
   const forwarded = (input.dateForwarded || '').slice(0, 10);
@@ -73,12 +73,20 @@ const computeStatus = (input: { receiver?: string; dateForwarded?: string; dueIn
   return today > dueDate ? 'Passed Due' : 'Pending';
 };
 
-export default function NewEntryPage() {
+function NewEntryPageContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const logId = (searchParams.get('logId') || '').trim();
+  const isStepMode = Boolean(logId);
   const [currentTime, setCurrentTime] = useState(new Date());
   const [saving, setSaving] = useState(false);
   const [formData, setFormData] = useState<Omit<EDATEntry, 'id'>>({ ...EMPTY_ENTRY });
-  const [routeDraft, setRouteDraft] = useState<EDATRouteStep>({ personnel: '', action: '', remarks: '' });
+  const [completed, setCompleted] = useState(false);
+  const [routeDraft, setRouteDraft] = useState<{ receiver: string; action: string; remarks: string }>({
+    receiver: '',
+    action: '',
+    remarks: '',
+  });
   const [generatedIds, setGeneratedIds] = useState<{ trackingNumber: string; edatsNumber: string } | null>(null);
   const [attachments, setAttachments] = useState<File[]>([]);
 
@@ -88,17 +96,59 @@ export default function NewEntryPage() {
   }, []);
 
   useEffect(() => {
-    if (!formData.receiver.trim()) return;
-    if (formData.dateReceived && formData.timeReceived) return;
+    if (!completed) {
+      setFormData((prev) => ({ ...prev, dateReceived: null, timeReceived: null }));
+      return;
+    }
     const { date, time } = getCurrentManilaDateTime();
     setFormData((prev) => ({
       ...prev,
       dateReceived: prev.dateReceived || date,
       timeReceived: prev.timeReceived || time,
     }));
-  }, [formData.receiver, formData.dateReceived, formData.timeReceived]);
+  }, [completed]);
 
   useEffect(() => {
+    if (!isStepMode) return;
+    let cancelled = false;
+    const loadLog = async () => {
+      try {
+        const response = await fetch(`/api/edats/${encodeURIComponent(logId)}`);
+        if (!response.ok) return;
+        const data = (await response.json()) as Partial<EDATEntry>;
+        if (cancelled) return;
+        setCompleted(false);
+        setFormData((prev) => ({
+          ...prev,
+          trackingNumber: data.trackingNumber ?? prev.trackingNumber,
+          edatsNumber: data.edatsNumber ?? prev.edatsNumber,
+          dateForwarded: (data.dateForwarded ?? prev.dateForwarded).slice(0, 10),
+          sender: data.sender ?? prev.sender,
+          subject: data.subject ?? prev.subject,
+          documentType: data.documentType ?? prev.documentType,
+          actionRequired: Array.isArray(data.actionRequired) ? data.actionRequired : prev.actionRequired,
+          dueIn:
+            data.dueIn === 'technical' || data.dueIn === 'highlyTechnical'
+              ? data.dueIn
+              : prev.dueIn,
+          routeHistory: Array.isArray(data.routeHistory) ? data.routeHistory : prev.routeHistory,
+          section: data.section ?? prev.section,
+          receiver: data.receiver ?? prev.receiver,
+        }));
+        setGeneratedIds({
+          trackingNumber: typeof data.trackingNumber === 'string' ? data.trackingNumber : '',
+          edatsNumber: typeof data.edatsNumber === 'string' ? data.edatsNumber : '',
+        });
+      } catch {}
+    };
+    loadLog();
+    return () => {
+      cancelled = true;
+    };
+  }, [isStepMode, logId]);
+
+  useEffect(() => {
+    if (isStepMode) return;
     let cancelled = false;
     const loadNext = async () => {
       try {
@@ -120,7 +170,7 @@ export default function NewEntryPage() {
     return () => {
       cancelled = true;
     };
-  }, [formData.dateForwarded]);
+  }, [formData.dateForwarded, isStepMode]);
 
   const formattedDate = currentTime.toLocaleDateString('en-US', {
     weekday: 'short',
@@ -134,7 +184,7 @@ export default function NewEntryPage() {
     second: '2-digit',
   });
   const computedStatus = computeStatus({
-    receiver: formData.receiver,
+    completed,
     dateForwarded: formData.dateForwarded,
     dueIn: formData.dueIn,
   });
@@ -160,21 +210,6 @@ export default function NewEntryPage() {
         ? prev.actionRequired.filter((v) => v !== option)
         : [...prev.actionRequired, option],
     }));
-  };
-
-  const addRouteStep = () => {
-    const next: EDATRouteStep = {
-      personnel: routeDraft.personnel.trim(),
-      action: routeDraft.action.trim(),
-      remarks: routeDraft.remarks.trim(),
-    };
-    if (!next.personnel) return;
-    setFormData((prev) => ({ ...prev, routeHistory: [...prev.routeHistory, next] }));
-    setRouteDraft({ personnel: '', action: '', remarks: '' });
-  };
-
-  const removeRouteStep = (index: number) => {
-    setFormData((prev) => ({ ...prev, routeHistory: prev.routeHistory.filter((_, i) => i !== index) }));
   };
 
   const addAttachments = (files: FileList | null) => {
@@ -207,19 +242,51 @@ export default function NewEntryPage() {
     e.preventDefault();
     setSaving(true);
     try {
-      const response = await fetch('/api/edats', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData),
-      });
-      if (!response.ok) throw new Error('Failed');
-      const created = await response.json();
-      const trackingNumber =
-        typeof created.trackingNumber === 'string'
-          ? created.trackingNumber
-          : typeof created.id === 'string'
-            ? created.id
-            : '';
+      let trackingNumber = '';
+      if (isStepMode) {
+        if (!routeDraft.receiver.trim()) throw new Error('Missing receiver');
+        const response = await fetch(`/api/edats/${encodeURIComponent(logId)}/entries`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            sender: (formData.routeHistory[formData.routeHistory.length - 1]?.receiver ?? formData.sender ?? '').trim(),
+            receiver: routeDraft.receiver,
+            action: routeDraft.action,
+            remarks: routeDraft.remarks,
+            completed,
+          }),
+        });
+        if (!response.ok) throw new Error('Failed');
+        trackingNumber = logId;
+      } else {
+        if (completed && !formData.receiver.trim()) throw new Error('Missing receiver');
+        const autoRouteHistory =
+          formData.routeHistory.length > 0
+            ? formData.routeHistory
+            : formData.sender.trim() && formData.receiver.trim()
+              ? [
+                  {
+                    sender: formData.sender.trim(),
+                    receiver: formData.receiver.trim(),
+                    action: formData.actionTakenReceiver.trim(),
+                    remarks: '',
+                  },
+                ]
+              : [];
+        const response = await fetch('/api/edats', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...formData, routeHistory: autoRouteHistory, completed }),
+        });
+        if (!response.ok) throw new Error('Failed');
+        const created = await response.json();
+        trackingNumber =
+          typeof created.trackingNumber === 'string'
+            ? created.trackingNumber
+            : typeof created.id === 'string'
+              ? created.id
+              : '';
+      }
 
       if (!trackingNumber) throw new Error('Missing id');
 
@@ -233,15 +300,15 @@ export default function NewEntryPage() {
           body: form,
         });
         if (!uploadResponse.ok) {
-          alert('Entry created, but failed to upload attachments.');
+          alert(isStepMode ? 'Step added, but failed to upload attachments.' : 'Entry created, but failed to upload attachments.');
         } else {
           setAttachments([]);
         }
       }
 
-      router.push(`/?created=1&newId=${encodeURIComponent(trackingNumber)}`);
+      router.push(isStepMode ? `/edats/${encodeURIComponent(trackingNumber)}` : `/?created=1&newId=${encodeURIComponent(trackingNumber)}`);
     } catch {
-      alert('Failed to create entry.');
+      alert(isStepMode ? 'Failed to add log step.' : 'Failed to create entry.');
     } finally {
       setSaving(false);
     }
@@ -286,8 +353,10 @@ export default function NewEntryPage() {
 
         <section className="bg-white dark:bg-emerald-900/50 rounded-xl sm:rounded-2xl shadow-lg border border-emerald-200 dark:border-emerald-800 overflow-hidden">
           <div className="p-4 sm:p-6 border-b border-emerald-200 dark:border-emerald-800">
-            <div className="text-xl sm:text-2xl font-bold text-emerald-900 dark:text-emerald-50">New Entry</div>
-            <div className="text-base text-emerald-600 dark:text-emerald-400">Create a new document log record.</div>
+            <div className="text-xl sm:text-2xl font-bold text-emerald-900 dark:text-emerald-50">{isStepMode ? 'New Log Step' : 'New Entry'}</div>
+            <div className="text-base text-emerald-600 dark:text-emerald-400">
+              {isStepMode ? 'Create the next connected step for this existing log.' : 'Create a new document log record.'}
+            </div>
           </div>
 
           <form onSubmit={handleSubmit} className="p-4 sm:p-6 space-y-6">
@@ -309,19 +378,19 @@ export default function NewEntryPage() {
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               <div className="lg:col-span-2">
                 <label className="block text-sm font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400 mb-1">Subject</label>
-                <textarea name="subject" value={formData.subject} onChange={handleChange} rows={2} required className="w-full p-2.5 text-base border rounded-lg bg-white dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800 text-emerald-900 dark:text-emerald-50" />
+                <textarea name="subject" value={formData.subject} onChange={handleChange} rows={2} required disabled={isStepMode} className="w-full p-2.5 text-base border rounded-lg bg-white dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800 text-emerald-900 dark:text-emerald-50 disabled:opacity-70" />
               </div>
               <div className="lg:col-span-2">
                 <label className="block text-sm font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400 mb-1">Type of Document</label>
-                <input name="documentType" value={formData.documentType} onChange={handleChange} className="w-full p-2.5 text-base border rounded-lg bg-white dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800 text-emerald-900 dark:text-emerald-50" />
+                <input name="documentType" value={formData.documentType} onChange={handleChange} disabled={isStepMode} className="w-full p-2.5 text-base border rounded-lg bg-white dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800 text-emerald-900 dark:text-emerald-50 disabled:opacity-70" />
               </div>
               <div>
                 <label className="block text-sm font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400 mb-1">Date Forwarded</label>
-                <input type="date" name="dateForwarded" value={formData.dateForwarded} onChange={handleChange} required className="w-full p-2.5 text-base border rounded-lg bg-white dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800 text-emerald-900 dark:text-emerald-50" />
+                <input type="date" name="dateForwarded" value={formData.dateForwarded} onChange={handleChange} required disabled={isStepMode} className="w-full p-2.5 text-base border rounded-lg bg-white dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800 text-emerald-900 dark:text-emerald-50 disabled:opacity-70" />
               </div>
               <div>
                 <label className="block text-sm font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400 mb-1">Sender</label>
-                <input name="sender" value={formData.sender} onChange={handleChange} required className="w-full p-2.5 text-base border rounded-lg bg-white dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800 text-emerald-900 dark:text-emerald-50" />
+                <input name="sender" value={formData.sender} onChange={handleChange} required disabled={isStepMode} className="w-full p-2.5 text-base border rounded-lg bg-white dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800 text-emerald-900 dark:text-emerald-50 disabled:opacity-70" />
               </div>
             </div>
 
@@ -329,8 +398,8 @@ export default function NewEntryPage() {
               <label className="block text-sm font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400 mb-1">Action Required</label>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 {ACTION_REQUIRED_OPTIONS.map((option) => (
-                  <label key={option} className="flex items-center gap-2 text-base text-emerald-900 dark:text-emerald-50">
-                    <input type="checkbox" checked={formData.actionRequired.includes(option)} onChange={() => toggleActionRequired(option)} className="accent-emerald-600" />
+                  <label key={option} className={`flex items-center gap-2 text-base text-emerald-900 dark:text-emerald-50 ${isStepMode ? 'opacity-70 pointer-events-none' : ''}`}>
+                    <input type="checkbox" checked={formData.actionRequired.includes(option)} onChange={() => toggleActionRequired(option)} className="accent-emerald-600" disabled={isStepMode} />
                     <span>{option}</span>
                   </label>
                 ))}
@@ -345,8 +414,8 @@ export default function NewEntryPage() {
                   { value: 'technical', label: 'Technical (7 days)' },
                   { value: 'highlyTechnical', label: 'Highly Technical (20 days)' },
                 ].map((opt) => (
-                  <label key={opt.value} className="flex items-center gap-2 text-base text-emerald-900 dark:text-emerald-50">
-                    <input type="radio" name="dueIn" value={opt.value} checked={formData.dueIn === opt.value} onChange={(e) => setFormData((p) => ({ ...p, dueIn: e.target.value as EDATEntry['dueIn'] }))} className="accent-emerald-600" />
+                  <label key={opt.value} className={`flex items-center gap-2 text-base text-emerald-900 dark:text-emerald-50 ${isStepMode ? 'opacity-70 pointer-events-none' : ''}`}>
+                    <input type="radio" name="dueIn" value={opt.value} checked={formData.dueIn === opt.value} onChange={(e) => setFormData((p) => ({ ...p, dueIn: e.target.value as EDATEntry['dueIn'] }))} className="accent-emerald-600" disabled={isStepMode} />
                     <span>{opt.label}</span>
                   </label>
                 ))}
@@ -357,60 +426,46 @@ export default function NewEntryPage() {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400 mb-1">Section</label>
-                  <input name="section" value={formData.section} onChange={handleChange} className="w-full p-2.5 text-base border rounded-lg bg-white dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800 text-emerald-900 dark:text-emerald-50" />
+                  <input name="section" value={formData.section} onChange={handleChange} disabled={isStepMode} className="w-full p-2.5 text-base border rounded-lg bg-white dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800 text-emerald-900 dark:text-emerald-50 disabled:opacity-70" />
                 </div>
                 <div>
                   <label className="block text-sm font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400 mb-1">Receiver</label>
-                  <input name="receiver" value={formData.receiver} onChange={handleChange} className="w-full p-2.5 text-base border rounded-lg bg-white dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800 text-emerald-900 dark:text-emerald-50" />
+                  <input name="receiver" value={formData.receiver} onChange={handleChange} disabled={isStepMode} className="w-full p-2.5 text-base border rounded-lg bg-white dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800 text-emerald-900 dark:text-emerald-50 disabled:opacity-70" />
+                </div>
+              </div>
+
+              <div className="mt-3">
+                <label className="block text-sm font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400 mb-1">Completed?</label>
+                <div className={`grid grid-cols-1 sm:grid-cols-2 gap-2 ${isStepMode ? '' : ''}`}>
+                  <label className="flex items-center gap-2 text-base text-emerald-900 dark:text-emerald-50">
+                    <input type="radio" name="completed" value="yes" checked={completed === true} onChange={() => setCompleted(true)} className="accent-emerald-600" />
+                    <span>Yes</span>
+                  </label>
+                  <label className="flex items-center gap-2 text-base text-emerald-900 dark:text-emerald-50">
+                    <input type="radio" name="completed" value="no" checked={completed === false} onChange={() => setCompleted(false)} className="accent-emerald-600" />
+                    <span>No</span>
+                  </label>
                 </div>
               </div>
 
               <div>
                 <div className="flex items-center justify-between mb-1">
-                  <label className="block text-sm font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400">Route History</label>
-                  <button type="button" onClick={addRouteStep} className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold">
-                    <Plus size={14} />
-                    Add Step
-                  </button>
+                  <label className="block text-sm font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400">Log Entries</label>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 p-3 rounded-lg border border-emerald-200 dark:border-emerald-800">
-                  <input value={routeDraft.personnel} onChange={(e) => setRouteDraft((p) => ({ ...p, personnel: e.target.value }))} placeholder="Personnel" className="w-full p-2.5 text-base border rounded-lg bg-white dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800 text-emerald-900 dark:text-emerald-50" />
-                  <input value={routeDraft.action} onChange={(e) => setRouteDraft((p) => ({ ...p, action: e.target.value }))} placeholder="Action" className="w-full p-2.5 text-base border rounded-lg bg-white dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800 text-emerald-900 dark:text-emerald-50" />
-                  <textarea value={routeDraft.remarks} onChange={(e) => setRouteDraft((p) => ({ ...p, remarks: e.target.value }))} placeholder="Remarks" rows={2} className="sm:col-span-2 w-full p-2.5 text-base border rounded-lg bg-white dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800 text-emerald-900 dark:text-emerald-50" />
-                </div>
-
-                {formData.routeHistory.length === 0 ? (
-                  <div className="mt-2 text-base text-emerald-600/70 dark:text-emerald-300/60 italic">No route steps yet.</div>
+                {isStepMode ? (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 p-3 rounded-lg border border-emerald-200 dark:border-emerald-800">
+                    <input
+                      value={(formData.routeHistory[formData.routeHistory.length - 1]?.receiver ?? formData.sender ?? '').trim()}
+                      readOnly
+                      className="w-full p-2.5 text-base border rounded-lg bg-emerald-50/70 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800 text-emerald-900 dark:text-emerald-50"
+                    />
+                    <input value={routeDraft.receiver} onChange={(e) => setRouteDraft((p) => ({ ...p, receiver: e.target.value }))} placeholder="Receiver" className="w-full p-2.5 text-base border rounded-lg bg-white dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800 text-emerald-900 dark:text-emerald-50" />
+                    <input value={routeDraft.action} onChange={(e) => setRouteDraft((p) => ({ ...p, action: e.target.value }))} placeholder="Action (optional)" className="sm:col-span-2 w-full p-2.5 text-base border rounded-lg bg-white dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800 text-emerald-900 dark:text-emerald-50" />
+                    <textarea value={routeDraft.remarks} onChange={(e) => setRouteDraft((p) => ({ ...p, remarks: e.target.value }))} placeholder="Remarks" rows={2} className="sm:col-span-2 w-full p-2.5 text-base border rounded-lg bg-white dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800 text-emerald-900 dark:text-emerald-50" />
+                  </div>
                 ) : (
-                  <div className="relative overflow-x-auto mt-2">
-                    <div className="min-w-max px-2 pb-1">
-                      <div className="relative flex items-start gap-6 pt-2">
-                        <div className="absolute left-0 right-0 top-5 h-px bg-emerald-200 dark:bg-emerald-800" />
-                        {formData.routeHistory.map((step, index) => (
-                          <div key={`${step.personnel}-${index}`} className="relative w-[280px] shrink-0 pt-10">
-                            <div className="absolute left-1/2 -translate-x-1/2 top-2 w-6 h-6 rounded-full bg-emerald-600 dark:bg-emerald-700 text-white flex items-center justify-center text-[11px] font-extrabold">
-                              {index + 1}
-                            </div>
-                            <div className="rounded-xl border border-emerald-200 dark:border-emerald-800 bg-white dark:bg-emerald-950/20 p-4">
-                              <div className="flex items-start justify-between gap-3">
-                                <div className="min-w-0">
-                                  <div className="font-semibold text-emerald-900 dark:text-emerald-50 truncate">{step.personnel}</div>
-                                  {step.action ? (
-                                    <div className="mt-1 inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
-                                      {step.action}
-                                    </div>
-                                  ) : null}
-                                </div>
-                                <button type="button" onClick={() => removeRouteStep(index)} className="shrink-0 p-2 rounded-lg text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20" title="Remove step">
-                                  <Trash2 size={14} />
-                                </button>
-                              </div>
-                              {step.remarks ? <div className="mt-2 text-sm text-emerald-700/80 dark:text-emerald-300/80 whitespace-pre-wrap">{step.remarks}</div> : null}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
+                  <div className="mt-2 text-base text-emerald-600/70 dark:text-emerald-300/60 italic">
+                    First log entry is auto-filled from Sender and Receiver when you create the log.
                   </div>
                 )}
               </div>
@@ -420,10 +475,11 @@ export default function NewEntryPage() {
                   <label className="block text-sm font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400">Attachments</label>
                   <label className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-100/70 dark:bg-emerald-900/40 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-100 text-sm font-semibold cursor-pointer hover:bg-emerald-100 dark:hover:bg-emerald-900/60 transition-colors">
                     <Paperclip size={14} />
-                    Add Files
+                    Add Files / Images
                     <input
                       type="file"
                       multiple
+                      accept="image/*,.png,.jpg,.jpeg,.gif,.webp,application/pdf,.pdf,application/msword,.doc,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx,application/vnd.ms-excel,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.xlsx,application/vnd.ms-powerpoint,.ppt,application/vnd.openxmlformats-officedocument.presentationml.presentation,.pptx,text/plain,.txt"
                       onChange={(e) => {
                         addAttachments(e.target.files);
                         e.currentTarget.value = '';
@@ -477,16 +533,16 @@ export default function NewEntryPage() {
 
               <div>
                 <label className="block text-sm font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400 mb-1">Action Taken - Receiver</label>
-                <textarea name="actionTakenReceiver" value={formData.actionTakenReceiver} onChange={handleChange} rows={2} className="w-full p-2.5 text-base border rounded-lg bg-white dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800 text-emerald-900 dark:text-emerald-50" />
+                <textarea name="actionTakenReceiver" value={formData.actionTakenReceiver} onChange={handleChange} rows={2} disabled={isStepMode} className="w-full p-2.5 text-base border rounded-lg bg-white dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800 text-emerald-900 dark:text-emerald-50 disabled:opacity-70" />
               </div>
             </div>
 
             <div className="flex flex-col-reverse sm:flex-row justify-end gap-3 pt-4 border-t border-emerald-200 dark:border-emerald-800">
-              <button type="button" onClick={() => router.push('/')} className="w-full sm:w-auto px-5 py-2.5 text-base font-bold text-emerald-600 dark:text-emerald-400 hover:text-emerald-800 dark:hover:text-emerald-200 transition-colors">
+              <button type="button" onClick={() => router.push(isStepMode ? `/edats/${encodeURIComponent(logId)}` : '/')} className="w-full sm:w-auto px-5 py-2.5 text-base font-bold text-emerald-600 dark:text-emerald-400 hover:text-emerald-800 dark:hover:text-emerald-200 transition-colors">
                 Cancel
               </button>
               <button type="submit" disabled={saving} className="w-full sm:w-auto px-6 py-2.5 text-base font-bold text-white bg-emerald-600 dark:bg-emerald-600 hover:bg-emerald-700 dark:hover:bg-emerald-500 rounded-lg shadow-md hover:shadow-lg transition-all disabled:opacity-70">
-                {saving ? 'Creating...' : 'Create Entry'}
+                {saving ? (isStepMode ? 'Adding Step...' : 'Creating...') : isStepMode ? 'Add Step to Log' : 'Create Entry'}
               </button>
             </div>
           </form>
@@ -498,5 +554,13 @@ export default function NewEntryPage() {
         <p className="text-[10px] text-gray-500 dark:text-emerald-600/50 uppercase tracking-wider italic">Working towards a sustainable environment</p>
       </footer>
     </main>
+  );
+}
+
+export default function NewEntryPage() {
+  return (
+    <Suspense fallback={<main className="min-h-screen bg-gray-50 dark:bg-emerald-950" />}>
+      <NewEntryPageContent />
+    </Suspense>
   );
 }

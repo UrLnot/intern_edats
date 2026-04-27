@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { Suspense, useState, useEffect, useMemo } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { EDATEntry } from '@/types/edat';
 import EDATCards from '@/components/EDATCards';
@@ -10,7 +10,7 @@ import ThemeToggle from '@/components/ThemeToggle';
 import { useThemeValue } from '@/components/ThemeProvider';
 import { LogOut, Plus, Trees, Filter, ChevronDown, CheckCircle2, X } from 'lucide-react';
 
-export default function Home() {
+function HomeInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [entries, setEntries] = useState<EDATEntry[]>([]);
@@ -370,5 +370,13 @@ export default function Home() {
         <p className="text-[10px] text-gray-500 dark:text-emerald-600/50 uppercase tracking-wider italic">Working towards a sustainable environment</p>
       </footer>
     </main>
+  );
+}
+
+export default function Home() {
+  return (
+    <Suspense fallback={null}>
+      <HomeInner />
+    </Suspense>
   );
 }
