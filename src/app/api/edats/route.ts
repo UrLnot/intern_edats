@@ -20,6 +20,15 @@ type LogRow = RowDataPacket & {
   status: string;
 };
 
+type RouteEntryRow = RowDataPacket & {
+  tracking_number: string;
+  step_index: number;
+  sender: string | null;
+  receiver: string | null;
+  action: string | null;
+  remarks: string | null;
+};
+
 const normalizeDueIn = (value: unknown): 'simple' | 'technical' | 'highlyTechnical' =>
   value === 'technical' || value === 'highlyTechnical' ? value : 'simple';
 
@@ -40,9 +49,8 @@ const getManilaTimeHHMMSS = (date: Date): string =>
     hour12: false,
   }).format(date);
 
-const computeStatus = (input: { receiver?: unknown; dateForwarded?: unknown; dueIn?: unknown }): 'Completed' | 'Pending' | 'Passed Due' => {
-  const receiver = typeof input.receiver === 'string' ? input.receiver.trim() : '';
-  if (receiver) return 'Completed';
+const computeStatus = (input: { completed?: unknown; dateForwarded?: unknown; dueIn?: unknown }): 'Completed' | 'Pending' | 'Passed Due' => {
+  if (input.completed === true) return 'Completed';
 
   const dueIn = normalizeDueIn(input.dueIn);
   const days = dueIn === 'technical' ? 7 : dueIn === 'highlyTechnical' ? 20 : 3;
@@ -151,18 +159,26 @@ const serializeActionRequired = (value: unknown): string => {
   return list.length ? JSON.stringify(list) : '';
 };
 
-const parseRouteHistory = (value: unknown): Array<{ personnel: string; action: string; remarks: string }> => {
+const parseRouteHistory = (
+  value: unknown
+): Array<{ sender: string; receiver: string; action: string; remarks: string }> => {
   if (Array.isArray(value)) {
     return value
       .filter((v): v is Record<string, unknown> => typeof v === 'object' && v !== null)
       .map((v) => ({
-        personnel:
-          typeof v.personnel === 'string'
-            ? v.personnel
+        sender:
+          typeof v.sender === 'string'
+            ? v.sender
+            : typeof v.from === 'string'
+              ? v.from
+              : '',
+        receiver:
+          typeof v.receiver === 'string'
+            ? v.receiver
             : typeof v.to === 'string'
               ? v.to
-              : typeof v.from === 'string'
-                ? v.from
+              : typeof v.personnel === 'string'
+                ? v.personnel
                 : '',
         action: typeof v.action === 'string' ? v.action : '',
         remarks:
@@ -172,7 +188,14 @@ const parseRouteHistory = (value: unknown): Array<{ personnel: string; action: s
               ? `${typeof v.date === 'string' ? v.date : ''} ${typeof v.time === 'string' ? v.time : ''}`.trim()
               : '',
       }))
-      .filter((v) => v.personnel || v.action || v.remarks);
+      .filter((v) => v.sender || v.receiver || v.action || v.remarks)
+      .map((v) => ({
+        sender: typeof v.sender === 'string' ? v.sender.trim() : '',
+        receiver: typeof v.receiver === 'string' ? v.receiver.trim() : '',
+        action: typeof v.action === 'string' ? v.action.trim() : '',
+        remarks: typeof v.remarks === 'string' ? v.remarks.trim() : '',
+      }))
+      .filter((v) => v.sender || v.receiver || v.action || v.remarks);
   }
   if (typeof value !== 'string') return [];
   const trimmed = value.trim();
@@ -189,18 +212,77 @@ const serializeRouteHistory = (value: unknown): string => {
   return list.length ? JSON.stringify(list) : '';
 };
 
-const updateRouteHistoryTx = async (
+const ensureLogEntriesTable = async (conn: { query: (sql: string, values?: unknown[]) => Promise<unknown> }) => {
+  await conn.query(`
+    CREATE TABLE IF NOT EXISTS edats_log_entries (
+      tracking_number VARCHAR(64) NOT NULL,
+      step_index INT NOT NULL,
+      sender VARCHAR(255) NOT NULL DEFAULT '',
+      receiver VARCHAR(255) NOT NULL DEFAULT '',
+      action VARCHAR(255) NOT NULL DEFAULT '',
+      remarks TEXT NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (tracking_number, step_index),
+      INDEX idx_edats_log_entries_tracking_number (tracking_number)
+    )
+  `);
+};
+
+const parseRouteEntriesRows = (
+  rows: Array<RouteEntryRow>
+): Map<string, Array<{ sender: string; receiver: string; action: string; remarks: string }>> => {
+  const grouped = new Map<string, Array<{ sender: string; receiver: string; action: string; remarks: string }>>();
+  for (const row of rows) {
+    const tracking = typeof row.tracking_number === 'string' ? row.tracking_number : '';
+    if (!tracking) continue;
+    const item = {
+      sender: typeof row.sender === 'string' ? row.sender.trim() : '',
+      receiver: typeof row.receiver === 'string' ? row.receiver.trim() : '',
+      action: typeof row.action === 'string' ? row.action.trim() : '',
+      remarks: typeof row.remarks === 'string' ? row.remarks.trim() : '',
+    };
+    if (!item.sender && !item.receiver && !item.action && !item.remarks) continue;
+    const list = grouped.get(tracking) ?? [];
+    list.push(item);
+    grouped.set(tracking, list);
+  }
+  return grouped;
+};
+
+const writeRouteEntriesTx = async (
+  conn: { query: (sql: string, values?: unknown[]) => Promise<unknown> },
+  trackingNumber: string,
+  value: unknown
+) => {
+  const steps = parseRouteHistory(value);
+  await ensureLogEntriesTable(conn);
+  await conn.query('DELETE FROM edats_log_entries WHERE tracking_number = ?', [trackingNumber]);
+  if (steps.length === 0) return;
+
+  const placeholders = steps.map(() => '(?, ?, ?, ?, ?, ?)').join(', ');
+  const values: unknown[] = [];
+  steps.forEach((step, idx) => {
+    values.push(trackingNumber, idx + 1, step.sender, step.receiver, step.action, step.remarks);
+  });
+
+  await conn.query(
+    `INSERT INTO edats_log_entries (tracking_number, step_index, sender, receiver, action, remarks) VALUES ${placeholders}`,
+    values
+  );
+};
+
+const syncLegacyRouteHistoryTx = async (
   conn: { query: (sql: string, values?: unknown[]) => Promise<unknown> },
   trackingNumber: string,
   value: unknown
 ) => {
   const json = serializeRouteHistory(value);
-  // We use one row per tracking number as requested.
-  // Using INSERT ... ON DUPLICATE KEY UPDATE to handle both create and update scenarios in one row.
-  await conn.query(
-    'INSERT INTO edats_route_history (tracking_number, history) VALUES (?, ?) ON DUPLICATE KEY UPDATE history = VALUES(history)',
-    [trackingNumber, json]
-  );
+  try {
+    await conn.query(
+      'INSERT INTO edats_route_history (tracking_number, history) VALUES (?, ?) ON DUPLICATE KEY UPDATE history = VALUES(history)',
+      [trackingNumber, json]
+    );
+  } catch {}
 };
 
 export async function GET(request: Request) {
@@ -225,11 +307,34 @@ export async function GET(request: Request) {
     const [rows] = await pool.query<LogRow[]>('SELECT * FROM edats_logs ORDER BY date_forwarded DESC');
 
     const trackingNumbers = rows.map((r) => r.tracking_number);
-    const routeHistoryByTracking = new Map<string, Array<{ personnel: string; action: string; remarks: string }>>();
+    const routeHistoryByTracking = new Map<
+      string,
+      Array<{ sender: string; receiver: string; action: string; remarks: string }>
+    >();
+    const routeEntriesByTracking = new Map<
+      string,
+      Array<{ sender: string; receiver: string; action: string; remarks: string }>
+    >();
+
+    if (trackingNumbers.length > 0) {
+      try {
+        await ensureLogEntriesTable(pool);
+        const placeholders = trackingNumbers.map(() => '?').join(', ');
+        const [entryRows] = await pool.query<RouteEntryRow[]>(
+          `SELECT tracking_number, step_index, sender, receiver, action, remarks
+           FROM edats_log_entries
+           WHERE tracking_number IN (${placeholders})
+           ORDER BY tracking_number ASC, step_index ASC`,
+          trackingNumbers
+        );
+        const grouped = parseRouteEntriesRows(entryRows);
+        for (const [tracking, steps] of grouped.entries()) routeEntriesByTracking.set(tracking, steps);
+      } catch {}
+    }
+
     if (trackingNumbers.length > 0) {
       try {
         const placeholders = trackingNumbers.map(() => '?').join(', ');
-        // Each log has one counterpart in the route_history table containing the JSON history.
         const [routeRows] = await pool.query<Array<RowDataPacket & { tracking_number: string; history: string }>>(
           `SELECT tracking_number, history FROM edats_route_history WHERE tracking_number IN (${placeholders})`,
           trackingNumbers
@@ -241,24 +346,38 @@ export async function GET(request: Request) {
     }
     
     // Map snake_case from DB to camelCase for frontend
-    const entries = rows.map((row) => ({
+    const entries = rows.map((row) => {
+      const completed = Boolean(
+        row.date_received &&
+          (row.date_received instanceof Date
+            ? !Number.isNaN(row.date_received.getTime())
+            : typeof row.date_received === 'string'
+              ? row.date_received.trim() && row.date_received !== '0000-00-00'
+              : false)
+      );
+      return {
       id: row.tracking_number, // Using tracking_number as id since no id column exists
       trackingNumber: row.tracking_number,
       edatsNumber: row.edats_number,
-      status: computeStatus({ receiver: row.receiver, dateForwarded: row.date_forwarded, dueIn: row.due_in }),
+      status: computeStatus({ completed, dateForwarded: row.date_forwarded, dueIn: row.due_in }),
       dateForwarded: row.date_forwarded,
       sender: row.sender,
       subject: row.subject,
       documentType: row.document_type ?? '',
       actionRequired: parseActionRequired(row.actioned_required),
       dueIn: row.due_in === 'technical' || row.due_in === 'highlyTechnical' ? row.due_in : 'simple',
-      routeHistory: routeHistoryByTracking.get(row.tracking_number) ?? parseRouteHistory(row.route_history),
+      routeHistory:
+        routeEntriesByTracking.get(row.tracking_number) ??
+        routeHistoryByTracking.get(row.tracking_number) ??
+        parseRouteHistory(row.route_history),
       section: row.section ?? '',
       receiver: row.receiver,
       actionTakenReceiver: row.action_taken_receiver,
       timeReceived: row.time_received,
       dateReceived: row.date_received,
-    }));
+      completed,
+      };
+    });
 
     return NextResponse.json(entries);
   } catch (error) {
@@ -273,10 +392,12 @@ export async function POST(request: Request) {
 
     const dateForwarded = data.dateForwarded ? new Date(data.dateForwarded).toISOString().split('T')[0] : null;
     const dueIn = normalizeDueIn(data.dueIn);
-    const status = computeStatus({ receiver: data.receiver, dateForwarded, dueIn });
+    const completed = typeof data.completed === 'boolean' ? data.completed : false;
+    const status = computeStatus({ completed, dateForwarded, dueIn });
     const receiver = typeof data.receiver === 'string' ? data.receiver.trim() : '';
-    const receivedDate = receiver ? getManilaDateYYYYMMDD(new Date()) : null;
-    const receivedTime = receiver ? getManilaTimeHHMMSS(new Date()) : null;
+    const now = new Date();
+    const receivedDate = completed ? getManilaDateYYYYMMDD(now) : null;
+    const receivedTime = completed ? getManilaTimeHHMMSS(now) : null;
 
     const columns = [
       'tracking_number',
@@ -327,7 +448,8 @@ export async function POST(request: Request) {
       try {
         await conn.beginTransaction();
         await conn.query(query, values);
-        await updateRouteHistoryTx(conn, providedTrackingNumber, data.routeHistory);
+        await writeRouteEntriesTx(conn, providedTrackingNumber, data.routeHistory);
+        await syncLegacyRouteHistoryTx(conn, providedTrackingNumber, data.routeHistory);
         await conn.commit();
       } catch (error) {
         await conn.rollback();
@@ -360,7 +482,8 @@ export async function POST(request: Request) {
         try {
           await conn.beginTransaction();
           await conn.query(query, values);
-          await updateRouteHistoryTx(conn, trackingNumber, data.routeHistory);
+          await writeRouteEntriesTx(conn, trackingNumber, data.routeHistory);
+          await syncLegacyRouteHistoryTx(conn, trackingNumber, data.routeHistory);
           await conn.commit();
         } catch (error) {
           await conn.rollback();

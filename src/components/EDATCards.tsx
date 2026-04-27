@@ -42,17 +42,17 @@ export default function EDATCards({ entries, onDelete, onView, highlightedId }: 
           <div
             id={`card-${entry.id}`}
             key={entry.id}
-            className={`group relative flex flex-col h-full bg-white/60 dark:bg-emerald-900/20 backdrop-blur-xl border border-emerald-200/50 dark:border-emerald-800/50 rounded-2xl overflow-hidden transition-all hover:shadow-2xl hover:shadow-emerald-500/10 hover:-translate-y-1 active:scale-[0.99] ${
-              highlighted ? 'ring-2 ring-emerald-400/70 shadow-xl shadow-emerald-500/20 animate-pulse' : ''
+            className={`group relative flex flex-col h-full bg-white/70 dark:bg-emerald-900/30 backdrop-blur-xl border border-emerald-200/50 dark:border-emerald-800/50 rounded-2xl overflow-hidden transition-all hover:shadow-2xl hover:-translate-y-1 hover:ring-2 hover:ring-emerald-300/60 active:scale-[0.99] ${
+              highlighted ? 'ring-4 ring-emerald-400 shadow-2xl animate-pulse' : ''
             }`}
           >
           {/* Status Badge */}
           <div className="absolute top-4 right-4 z-10">
-            <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider shadow-sm ${
-              entry.status?.toLowerCase() === 'completed' ? 'bg-emerald-100/80 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300' :
-              entry.status?.toLowerCase() === 'pending' ? 'bg-amber-100/80 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300' :
-              entry.status?.toLowerCase() === 'passed due' ? 'bg-red-100/80 text-red-700 dark:bg-red-500/20 dark:text-red-300' :
-              'bg-emerald-50/80 text-emerald-600 dark:bg-emerald-900/40 dark:text-emerald-400'
+            <span className={`px-4 py-2 rounded-full text-[11px] font-black uppercase tracking-wider shadow-lg border-2 ${
+              entry.status?.toLowerCase() === 'completed' ? 'bg-emerald-500/90 text-white border-emerald-600/50 dark:bg-emerald-400/90 dark:text-emerald-950 dark:border-emerald-300/50 shadow-emerald-500/30' :
+              entry.status?.toLowerCase() === 'pending' ? 'bg-amber-500/90 text-white border-amber-600/50 dark:bg-amber-400/90 dark:text-amber-950 dark:border-amber-300/50 shadow-amber-500/30' :
+              entry.status?.toLowerCase() === 'passed due' ? 'bg-red-500/90 text-white border-red-600/50 dark:bg-red-400/90 dark:text-red-950 dark:border-red-300/50 shadow-red-500/30' :
+              'bg-emerald-400/90 text-emerald-950 border-emerald-500/50 dark:bg-emerald-300/90 dark:text-emerald-950 dark:border-emerald-200/50 shadow-emerald-400/30'
             }`}>
               {entry.status || 'Pending'}
             </span>

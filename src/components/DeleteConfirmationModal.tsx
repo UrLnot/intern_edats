@@ -22,12 +22,12 @@ export default function DeleteConfirmationModal({
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
       {/* Backdrop */}
       <div 
-        className="absolute inset-0 bg-emerald-950/20 dark:bg-black/40 backdrop-blur-sm transition-opacity"
+        className="absolute inset-0 bg-emerald-950/40 dark:bg-black/60 backdrop-blur-lg transition-opacity animate-in fade-in duration-200"
         onClick={onClose}
       />
       
       {/* Modal Container */}
-      <div className="relative w-full max-w-md transform overflow-hidden rounded-3xl bg-white/80 dark:bg-emerald-900/40 backdrop-blur-2xl border border-emerald-200/50 dark:border-emerald-800/50 shadow-2xl transition-all animate-in fade-in zoom-in duration-300">
+      <div className="relative w-full max-w-md transform overflow-hidden rounded-3xl bg-white/90 dark:bg-emerald-900/50 backdrop-blur-2xl border-2 border-emerald-300/70 dark:border-emerald-700/70 shadow-2xl shadow-emerald-500/20 dark:shadow-emerald-400/20 transition-all animate-in fade-in zoom-in duration-300">
         
         {/* Header Decor */}
         <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-red-500/50 via-red-500 to-red-500/50" />
