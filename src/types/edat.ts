@@ -1,26 +1,50 @@
-export interface EDATRouteStep {
+export type DueInType = 'simple' | 'technical' | 'highlyTechnical';
+export type StepStatus = 'Pending' | 'Completed' | 'Passed Due';
+
+export const ACTION_REQUIRED_OPTIONS = [
+  'For appropriate action',
+  'For information/record/file',
+  'For evaluation/review',
+  'For comment/recommendation',
+  'For investigation',
+  'As instructed/directed',
+  'Please act URGENTLY',
+  'For compliance',
+  'For implementation',
+  'For dissemination',
+  'For attendance',
+  'For acknowledgement',
+  'Please see me about this',
+  'Please act within 15 days',
+] as const;
+
+export interface EDATStep {
+  edatsNumber: string;
+  trackingNumber: string;
+  stepNumber: number;
   sender: string;
+  actionTaken: string;
+  actionRequired: string[];
   receiver: string;
-  action: string;
-  remarks: string;
+  dueIn: DueInType;
+  dateForwarded: string; // YYYY-MM-DD
+  dateReceived: string | null; // YYYY-MM-DD
+  timeReceived: string | null; // HH:MM:SS
+  status: StepStatus;
+  createdAt: string;
 }
 
-export interface EDATEntry {
-  id: string; // This will map to tracking_number from DB
+export interface EDATLog {
   trackingNumber: string;
-  edatsNumber: string;
-  dateForwarded: string; // ISO string or Date string
-  sender: string;
   subject: string;
   documentType: string;
-  actionRequired: string[];
-  dueIn: 'simple' | 'technical' | 'highlyTechnical';
-  routeHistory: EDATRouteStep[];
-  section: string;
-  receiver: string;
-  actionTakenReceiver: string;
-  timeReceived: string | null;
-  dateReceived: string | null; // ISO string or Date string
   status: string;
-  completed?: boolean;
+  createdAt: string;
+  steps: EDATStep[];
+}
+
+// Keep EDATEntry for backward compatibility or as a utility type if needed, 
+// but we should transition to EDATLog
+export interface EDATEntry extends EDATLog {
+  id: string; // maps to trackingNumber
 }
