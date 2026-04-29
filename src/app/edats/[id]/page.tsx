@@ -214,6 +214,10 @@ export default function EntryDetailsPage() {
       setToast({ show: true, message: 'Please specify a receiver.', type: 'error' });
       return;
     }
+    if (!forwardData.actionTaken.trim()) {
+      setToast({ show: true, message: 'Please specify your action taken.', type: 'error' });
+      return;
+    }
     setSaving(true);
     try {
       const response = await fetch(`/api/edats/${log.trackingNumber}`, {
@@ -249,6 +253,10 @@ export default function EntryDetailsPage() {
   };
 
   const confirmFinalize = async () => {
+    if (!forwardData.actionTaken.trim()) {
+      setToast({ show: true, message: 'Please specify your action taken.', type: 'error' });
+      return;
+    }
     setSaving(true);
     try {
       const response = await fetch(`/api/edats/${log.trackingNumber}`, {
@@ -258,7 +266,6 @@ export default function EntryDetailsPage() {
           completeStep: true,
           finalizeLog: true,
           actionTaken: forwardData.actionTaken,
-          receiver: forwardData.receiver,
         }),
       });
       if (!response.ok) throw new Error('Failed to finalize');
@@ -400,55 +407,63 @@ export default function EntryDetailsPage() {
                 {log.steps.length === 0 ? (
                   <div className="text-emerald-600 dark:text-emerald-400 italic">No tracking steps recorded.</div>
                 ) : (
-                  <div className="relative">
-                    <div className="absolute left-4 sm:left-6 top-0 bottom-0 w-0.5 bg-emerald-100 dark:bg-emerald-800" />
-                    <div className="space-y-8">
-                      {log.steps.map((step, idx) => (
-                        <div key={step.edatsNumber} className="relative pl-10 sm:pl-16">
-                          <div className={`absolute left-2 sm:left-4 top-0 w-4 sm:w-5 h-4 sm:h-5 rounded-full border-2 border-white dark:border-emerald-900 z-10 ${step.status === 'Completed' ? 'bg-emerald-500' : 'bg-amber-500 animate-pulse'}`} />
-                          <div className="bg-emerald-50/50 dark:bg-emerald-950/20 rounded-xl border border-emerald-100 dark:border-emerald-800 p-4">
+                  <div className="relative overflow-x-auto">
+                    <div className="relative flex gap-6 min-w-max py-2 pr-2">
+                      <div className="pointer-events-none absolute left-0 right-0 top-4 h-0.5 bg-emerald-100 dark:bg-emerald-800" />
+                      {log.steps.map((step) => (
+                        <div key={step.edatsNumber} className="relative pt-8 w-[520px] flex-shrink-0">
+                          <div className={`absolute left-1/2 -translate-x-1/2 top-2 w-4 sm:w-5 h-4 sm:h-5 rounded-full border-2 border-white dark:border-emerald-900 z-10 ${step.status === 'Completed' ? 'bg-emerald-500' : 'bg-amber-500 animate-pulse'}`} />
+                          <div className="bg-emerald-50/50 dark:bg-emerald-950/20 rounded-xl border border-emerald-100 dark:border-emerald-800 p-5">
                             <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
                               <div className="flex items-center gap-2">
-                                <span className="px-2 py-0.5 bg-emerald-700 text-white text-[10px] font-bold rounded uppercase tracking-wider">Step {step.stepNumber}</span>
-                                <span className="text-xs font-mono text-emerald-600 dark:text-emerald-400">{step.edatsNumber}</span>
+                                <span className="px-2.5 py-1 bg-emerald-700 text-white text-xs font-bold rounded uppercase tracking-wider">Step {step.stepNumber}</span>
+                                <span className="text-sm font-mono text-emerald-600 dark:text-emerald-400">{step.edatsNumber}</span>
                               </div>
-                              <span className={`text-[10px] font-bold uppercase tracking-widest px-2 py-1 rounded-full ${step.status === 'Completed' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300' : 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'}`}>
+                              <span className={`text-xs font-bold uppercase tracking-widest px-2.5 py-1 rounded-full ${step.status === 'Completed' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300' : 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'}`}>
                                 {step.status}
                               </span>
                             </div>
-                            
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                              <div>
-                                <div className="text-[10px] font-bold text-emerald-700/60 dark:text-emerald-400/60 uppercase mb-1">Route</div>
-                                <div className="text-sm">
-                                  <span className="font-semibold text-emerald-900 dark:text-emerald-50">{step.sender}</span>
-                                  <span className="mx-2 text-emerald-400">→</span>
-                                  <span className="font-semibold text-emerald-900 dark:text-emerald-50">{step.receiver}</span>
+
+                            <div className="grid grid-cols-1 lg:grid-cols-[1fr_240px] gap-6">
+                              <div className="space-y-4">
+                                <div>
+                                  <div className="text-xs font-bold text-emerald-700/60 dark:text-emerald-400/60 uppercase mb-1">Sender</div>
+                                  <div className="text-base font-semibold text-emerald-900 dark:text-emerald-50">{step.sender || '-'}</div>
                                 </div>
-                              </div>
-                              <div>
-                                <div className="text-[10px] font-bold text-emerald-700/60 dark:text-emerald-400/60 uppercase mb-1">Timeline</div>
-                                <div className="text-xs text-emerald-800 dark:text-emerald-200">
-                                  Forwarded: {step.dateForwarded}
-                                  {step.dateReceived && ` | Received: ${step.dateReceived} ${step.timeReceived || ''}`}
-                                </div>
-                              </div>
-                              {step.actionRequired.length > 0 && (
-                                <div className="md:col-span-2">
-                                  <div className="text-[10px] font-bold text-emerald-700/60 dark:text-emerald-400/60 uppercase mb-1">Action Required</div>
-                                  <div className="flex flex-wrap gap-1">
-                                    {step.actionRequired.map(act => (
-                                      <span key={act} className="px-2 py-0.5 bg-white dark:bg-emerald-900/40 border border-emerald-200 dark:border-emerald-800 rounded text-[11px] text-emerald-800 dark:text-emerald-200">{act}</span>
-                                    ))}
+
+                                <div>
+                                  <div className="text-xs font-bold text-emerald-700/60 dark:text-emerald-400/60 uppercase mb-1">Action Taken</div>
+                                  <div className="text-base text-emerald-800 dark:text-emerald-200 bg-white dark:bg-emerald-900/20 p-3 rounded border border-emerald-100 dark:border-emerald-800/50">
+                                    {step.actionTaken?.trim() ? step.actionTaken : '-'}
                                   </div>
                                 </div>
-                              )}
-                              {step.actionTaken && (
-                                <div className="md:col-span-2">
-                                  <div className="text-[10px] font-bold text-emerald-700/60 dark:text-emerald-400/60 uppercase mb-1">Action Taken</div>
-                                  <div className="text-sm text-emerald-800 dark:text-emerald-200 bg-white dark:bg-emerald-900/20 p-2 rounded border border-emerald-100 dark:border-emerald-800/50">{step.actionTaken}</div>
+
+                                {step.receiver?.trim() ? (
+                                  <div>
+                                    <div className="text-xs font-bold text-emerald-700/60 dark:text-emerald-400/60 uppercase mb-1">Receiver</div>
+                                    <div className="text-base font-semibold text-emerald-900 dark:text-emerald-50">{step.receiver}</div>
+                                  </div>
+                                ) : null}
+
+                                {step.actionRequired.length > 0 ? (
+                                  <div>
+                                    <div className="text-xs font-bold text-emerald-700/60 dark:text-emerald-400/60 uppercase mb-1">Action Required</div>
+                                    <div className="flex flex-wrap gap-1">
+                                      {step.actionRequired.map(act => (
+                                        <span key={act} className="px-2 py-1 bg-white dark:bg-emerald-900/40 border border-emerald-200 dark:border-emerald-800 rounded text-sm text-emerald-800 dark:text-emerald-200">{act}</span>
+                                      ))}
+                                    </div>
+                                  </div>
+                                ) : null}
+                              </div>
+
+                              <div className="lg:border-l lg:border-emerald-200 dark:lg:border-emerald-800 lg:pl-6">
+                                <div className="text-xs font-bold text-emerald-700/60 dark:text-emerald-400/60 uppercase mb-1">Timeline</div>
+                                <div className="text-sm text-emerald-800 dark:text-emerald-200 space-y-1">
+                                  <div><span className="font-semibold">Forwarded:</span> {step.dateForwarded || '-'}</div>
+                                  <div><span className="font-semibold">Received:</span> {step.dateReceived ? `${step.dateReceived} ${step.timeReceived || ''}` : '-'}</div>
                                 </div>
-                              )}
+                              </div>
                             </div>
                           </div>
                         </div>
@@ -489,7 +504,7 @@ export default function EntryDetailsPage() {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div className="space-y-2">
                       <label className="text-xs font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-wider">
-                        Receiver (Next Step / Final Holder)
+                        Next Receiver
                       </label>
                       <input 
                         value={forwardData.receiver}

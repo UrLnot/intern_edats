@@ -169,12 +169,32 @@ export async function POST(request: Request) {
     const conn = await pool.getConnection();
 
     try {
+      const sender = typeof data.sender === 'string' ? data.sender.trim() : '';
+      const receiver = typeof data.receiver === 'string' ? data.receiver.trim() : '';
+      const subject = typeof data.subject === 'string' ? data.subject.trim() : '';
+      const documentType = typeof data.documentType === 'string' ? data.documentType.trim() : '';
+      if (!sender || !receiver || !subject) {
+        return NextResponse.json({ error: 'Missing required fields.' }, { status: 400 });
+      }
       await conn.beginTransaction();
+      const datePart = getPhilippinesDatePartYYYYMMDD(data.dateForwarded);
+      const year = datePart.slice(0, 4);
+      const month = datePart.slice(4, 6);
+      const getNextEdatsNumberForYearMonth = async (): Promise<string> => {
+        const like = `EDTS-${year}-${month}-%`;
+        const [rows] = await conn.query<Array<RowDataPacket & { edats_number: string }>>(
+          'SELECT edats_number FROM edats_steps WHERE edats_number LIKE ? ORDER BY edats_number DESC LIMIT 1',
+          [like]
+        );
+        const last = rows[0]?.edats_number;
+        const lastSeq = last ? /(\d+)$/.exec(last)?.[1] : undefined;
+        const nextSeq = (lastSeq ? parseInt(lastSeq, 10) : 0) + 1;
+        return `EDTS-${year}-${month}-${String(nextSeq).padStart(4, '0')}`;
+      };
 
       // 1. Determine Tracking Number
       let trackingNumber = data.trackingNumber?.trim();
       if (!trackingNumber) {
-        const datePart = getPhilippinesDatePartYYYYMMDD(data.dateForwarded);
         const seq = await getNextTrackingSequenceForDate(datePart);
         trackingNumber = `PMD-${datePart}-${String(seq).padStart(4, '0')}`;
       }
@@ -182,87 +202,40 @@ export async function POST(request: Request) {
       // 2. Insert Log
       await conn.query(
         'INSERT INTO edats_logs (tracking_number, subject, document_type, status) VALUES (?, ?, ?, ?)',
-        [trackingNumber, data.subject, data.documentType, 'Pending']
+        [trackingNumber, subject, documentType, 'Pending']
       );
 
       // 3. Determine EDATS Number for first step
       let edatsNumber = data.edatsNumber?.trim();
       if (!edatsNumber) {
-        const datePart = getPhilippinesDatePartYYYYMMDD(data.dateForwarded);
-        const year = datePart.slice(0, 4);
-        const month = datePart.slice(4, 6);
-        const seq = await getNextEdatsSequenceForYearMonth(year, month);
-        edatsNumber = `EDTS-${year}-${month}-${String(seq).padStart(4, '0')}`;
+        edatsNumber = await getNextEdatsNumberForYearMonth();
       }
 
       // 4. Insert Steps
       const dateForwarded = data.dateForwarded ? new Date(data.dateForwarded).toISOString().split('T')[0] : getManilaDateYYYYMMDD(new Date());
-      
-      if (data.actionTaken?.trim()) {
-        // If there's an action taken during creation, it means the sender did something.
-        // Create a completed step for the sender's action
-        await conn.query(
-          `INSERT INTO edats_steps 
-          (edats_number, tracking_number, step_number, sender, action_taken, action_required, receiver, due_in, date_forwarded, status) 
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            edatsNumber,
-            trackingNumber,
-            1,
-            data.sender,
-            data.actionTaken,
-            JSON.stringify([]),
-            data.sender,
-            normalizeDueIn(data.dueIn),
-            dateForwarded,
-            'Completed'
-          ]
-        );
 
-        // Then create the pending step for the receiver
-        // Generate a new edats number for the second step
-        const year = dateForwarded.slice(0, 4);
-        const month = dateForwarded.slice(5, 7);
-        const seq = await getNextEdatsSequenceForYearMonth(year, month);
-        const edatsNumber2 = `EDTS-${year}-${month}-${String(seq).padStart(4, '0')}`;
+      const initialActionTaken =
+        typeof data.actionTaken === 'string' && data.actionTaken.trim()
+          ? data.actionTaken.trim()
+          : 'Originated';
 
-        await conn.query(
-          `INSERT INTO edats_steps 
-          (edats_number, tracking_number, step_number, sender, action_taken, action_required, receiver, due_in, date_forwarded, status) 
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            edatsNumber2,
-            trackingNumber,
-            2,
-            data.sender,
-            '',
-            JSON.stringify(parseActionRequired(data.actionRequired)),
-            data.receiver,
-            normalizeDueIn(data.dueIn),
-            dateForwarded,
-            'Pending'
-          ]
-        );
-      } else {
-        // No initial action, just create the pending step for the receiver
-        await conn.query(
-          `INSERT INTO edats_steps 
-          (edats_number, tracking_number, step_number, sender, action_taken, action_required, receiver, due_in, date_forwarded, status) 
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            edatsNumber,
-            trackingNumber,
-            1,
-            data.sender,
-            '',
-            JSON.stringify(parseActionRequired(data.actionRequired)),
-            data.receiver,
-            normalizeDueIn(data.dueIn),
-            dateForwarded,
-            'Pending'
-          ]
-        );
-      }
+      await conn.query(
+        `INSERT INTO edats_steps 
+        (edats_number, tracking_number, step_number, sender, action_taken, action_required, receiver, due_in, date_forwarded, status) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          edatsNumber,
+          trackingNumber,
+          1,
+          sender,
+          initialActionTaken,
+          JSON.stringify(parseActionRequired(data.actionRequired)),
+          receiver,
+          normalizeDueIn(data.dueIn),
+          dateForwarded,
+          'Pending',
+        ]
+      );
 
       await conn.commit();
       return NextResponse.json({ trackingNumber, edatsNumber, status: 'Pending' });

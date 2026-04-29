@@ -3,7 +3,7 @@
 import React from 'react';
 import { EDATLog, EDATStep } from '@/types/edat';
 import { format } from 'date-fns';
-import { Trash2, Eye, Calendar, User, FileText, Clock, MapPin, GitCommit } from 'lucide-react';
+import { Trash2, Eye, Calendar, User, FileText, Clock, GitCommit } from 'lucide-react';
 
 interface EDATCardsProps {
   entries: EDATLog[];
@@ -39,8 +39,15 @@ export default function EDATCards({ entries, onDelete, onView, highlightedId }: 
       {entries.map((log) => {
         const highlighted = Boolean(highlightedId && log.trackingNumber === highlightedId);
         const latestStep = log.steps.length > 0 ? log.steps[log.steps.length - 1] : null;
-        const lastCompletedStep = [...log.steps].reverse().find(s => s.actionTaken);
         const firstStep = log.steps.length > 0 ? log.steps[0] : null;
+        const latestPendingStep = [...log.steps].reverse().find(s => s.status === 'Pending') ?? null;
+        const displayStep = latestPendingStep ?? latestStep;
+        const lastActionStep = [...log.steps].reverse().find(s => Boolean((s.actionTaken || '').trim())) ?? null;
+        const currentHolder = latestPendingStep?.receiver
+          ? latestPendingStep.receiver
+          : (log.status?.toLowerCase() === 'completed'
+              ? (latestStep?.sender || '-')
+              : '-');
 
         return (
           <div
@@ -108,7 +115,7 @@ export default function EDATCards({ entries, onDelete, onView, highlightedId }: 
                   <span className="text-[9px] font-black uppercase tracking-wider">Forwarded</span>
                 </div>
                 <span className="text-xs font-bold text-emerald-800 dark:text-emerald-100">
-                  {latestStep?.dateForwarded ? format(new Date(latestStep.dateForwarded), 'MMM dd, yyyy') : '-'}
+                  {displayStep?.dateForwarded ? format(new Date(displayStep.dateForwarded), 'MMM dd, yyyy') : '-'}
                 </span>
               </div>
               <div className="flex flex-col gap-1">
@@ -116,7 +123,7 @@ export default function EDATCards({ entries, onDelete, onView, highlightedId }: 
                   <Clock size={12} />
                   <span className="text-[9px] font-black uppercase tracking-wider">Due</span>
                 </div>
-                <span className="text-xs font-bold text-emerald-800 dark:text-emerald-100 truncate">{formatDueIn(latestStep?.dueIn)}</span>
+                <span className="text-xs font-bold text-emerald-800 dark:text-emerald-100 truncate">{formatDueIn(displayStep?.dueIn)}</span>
               </div>
             </div>
 
@@ -129,13 +136,13 @@ export default function EDATCards({ entries, onDelete, onView, highlightedId }: 
                 </div>
               </div>
               <div className="text-sm font-bold text-emerald-900 dark:text-emerald-50 truncate pl-3.5">
-                {latestStep?.receiver || 'Initial Sender'}
+                {currentHolder}
               </div>
-              {lastCompletedStep?.actionTaken && (
+              {lastActionStep?.actionTaken && (
                 <div className="mt-1 pl-3.5 border-l-2 border-emerald-200 dark:border-emerald-800">
                   <span className="text-[9px] font-black uppercase tracking-tight text-emerald-500/70 block mb-0.5">Last Action Taken</span>
                   <p className="text-[11px] text-emerald-700 dark:text-emerald-300 line-clamp-1 italic">
-                    "{lastCompletedStep.actionTaken}"
+                    {lastActionStep.sender ? `${lastActionStep.actionTaken} — ${lastActionStep.sender}` : lastActionStep.actionTaken}
                   </p>
                 </div>
               )}
@@ -148,107 +155,52 @@ export default function EDATCards({ entries, onDelete, onView, highlightedId }: 
                 <span className="text-[10px] font-black uppercase tracking-wider text-emerald-600/60 dark:text-emerald-400/60">Log Entries</span>
               </div>
               {log.steps.length > 0 ? (
-                <div className="relative grid grid-cols-3 gap-y-6 gap-x-2 px-1">
+                <div className="relative overflow-x-auto px-1">
                   {(() => {
-                    // Each step in eDTS represents a movement from Sender -> Receiver
-                    // We want to show the sequence of people the document has touched
                     const nodes: { name: string; action: string; isCurrent: boolean }[] = [];
                     
-                    if (log.steps.length > 0) {
-            // 1. First node is the INITIAL SENDER of the first step
-            const firstStep = log.steps[0];
-            nodes.push({
-              name: firstStep.sender,
-              action: 'Initial Entry',
-              isCurrent: false
-            });
+                    log.steps.forEach((step) => {
+                      const sender = (step.sender || 'Unknown').trim() || 'Unknown';
+                      const action = (step.actionTaken || '').trim() || (step.stepNumber === 1 ? 'Originated' : 'Forwarded');
+                      nodes.push({ name: sender, action, isCurrent: false });
 
-            // 2. Subsequent nodes are the RECEIVERS of each step
-            log.steps.forEach((step) => {
-              nodes.push({
-                name: step.receiver || 'Unknown',
-                action: step.status === 'Pending' ? 'Current Holder' : (step.actionTaken || 'Forwarded'),
-                isCurrent: step.status === 'Pending'
-              });
-            });
-          }
+                      if (!step.receiver) return;
 
-                    // We show up to 6 nodes in the visual timeline
-                    // If there are more than 6, we show the first 5 and the absolute last one (current)
-                    let displayNodes: typeof nodes = [];
-                    if (nodes.length <= 6) {
-                      displayNodes = nodes;
-                    } else {
-                      displayNodes = [...nodes.slice(0, 5), nodes[nodes.length - 1]];
-                    }
-
-                    const gridPositions = [0, 1, 2, 5, 4, 3];
-                    const gridSteps = new Array(6).fill(null);
-                    
-                    displayNodes.forEach((node, idx) => {
-                      gridSteps[gridPositions[idx]] = { ...node, originalIdx: idx };
+                      const receiver = step.receiver.trim();
+                      if (step.status === 'Pending') nodes.push({ name: receiver, action: 'Pending', isCurrent: true });
                     });
 
-                    return gridSteps.map((node, gridIdx) => {
-                      if (!node) return <div key={`empty-${gridIdx}`} />;
-                      
-                      const idx = node.originalIdx;
-                      const hasNext = idx < displayNodes.length - 1;
-                      
-                      return (
-                        <div key={idx} className="relative z-10 flex flex-col items-center min-w-0">
-                          <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center mb-2 relative z-20 ${
-                            node.isCurrent 
-                              ? 'bg-emerald-500 border-emerald-400 shadow-[0_0_10px_rgba(16,185,129,0.6)] animate-pulse' 
-                              : 'bg-white dark:bg-emerald-900 border-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.3)]'
-                          }`}>
-                            <div className={`w-1.5 h-1.5 rounded-full ${node.isCurrent ? 'bg-white' : 'bg-emerald-500'}`} />
+                    return (
+                      <div className="relative flex gap-4 min-w-max pb-1">
+                        <div className="pointer-events-none absolute left-0 right-0 top-[8px] h-px bg-emerald-300/40 dark:bg-emerald-700/40" />
+                        {nodes.map((node, idx) => (
+                          <div key={`${node.name}-${idx}`} className="relative z-10 flex flex-col items-center w-28 shrink-0">
+                            <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center mb-2 relative z-20 ${
+                              node.isCurrent
+                                ? 'bg-emerald-500 border-emerald-400 shadow-[0_0_10px_rgba(16,185,129,0.6)] animate-pulse'
+                                : 'bg-white dark:bg-emerald-900 border-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.3)]'
+                            }`}>
+                              <div className={`w-1.5 h-1.5 rounded-full ${node.isCurrent ? 'bg-white' : 'bg-emerald-500'}`} />
+                            </div>
+
+                            <span
+                              className={`text-[10px] font-black text-center truncate w-full px-1 uppercase tracking-tight ${
+                                node.isCurrent ? 'text-emerald-500 animate-pulse' : 'text-emerald-900 dark:text-emerald-50'
+                              }`}
+                              title={node.name}
+                            >
+                              {node.name}
+                            </span>
+                            <span className={`text-[9px] text-center line-clamp-2 w-full px-1 italic leading-tight min-h-[22px] mt-0.5 ${
+                              node.isCurrent ? 'text-emerald-400 font-bold' : 'text-emerald-600 dark:text-emerald-400/80'
+                            }`}>
+                              {node.action}
+                            </span>
                           </div>
-
-                          {hasNext && (
-                            <>
-                              {idx === 0 && (
-                                <div className="absolute top-[8px] left-1/2 w-full h-px bg-emerald-300/50 dark:bg-emerald-700/50 -z-10" />
-                              )}
-                              {idx === 1 && (
-                                <div className="absolute top-[8px] left-1/2 w-full h-px bg-emerald-300/50 dark:bg-emerald-700/50 -z-10" />
-                              )}
-                              {idx === 3 && (
-                                <div className="absolute top-[8px] right-1/2 w-full h-px bg-emerald-300/50 dark:bg-emerald-700/50 -z-10" />
-                              )}
-                              {idx === 4 && (
-                                <div className="absolute top-[8px] right-1/2 w-full h-px bg-emerald-300/50 dark:bg-emerald-700/50 -z-10" />
-                              )}
-                              
-                              {idx === 2 && (
-                                <div className="absolute top-[8px] left-1/2 w-px h-[66px] bg-emerald-300/50 dark:bg-emerald-700/50 -z-10" />
-                              )}
-                            </>
-                          )}
-
-                          <span
-                            className={`text-[10px] font-black text-center truncate w-full px-1 uppercase tracking-tight ${
-                              node.isCurrent ? 'text-emerald-500 animate-pulse' : 'text-emerald-900 dark:text-emerald-50'
-                            }`}
-                            title={node.name}
-                          >
-                            {node.name}
-                          </span>
-                          <span className={`text-[8px] text-center line-clamp-2 w-full px-1 italic leading-tight min-h-[20px] mt-0.5 ${
-                            node.isCurrent ? 'text-emerald-400 font-bold' : 'text-emerald-600 dark:text-emerald-400/80'
-                          }`}>
-                            {node.action}
-                          </span>
-                        </div>
-                      );
-                    });
+                        ))}
+                      </div>
+                    );
                   })()}
-                  
-                  {log.steps.length + 1 > 6 && (
-                    <div className="absolute -bottom-4 right-0">
-                      <span className="text-[8px] font-bold text-emerald-500/60 dark:text-emerald-400/40">+ {log.steps.length + 1 - 6} more</span>
-                    </div>
-                  )}
                 </div>
               ) : (
                 <p className="text-[10px] italic text-emerald-400/50 dark:text-emerald-600/40 pl-3.5">No entries recorded for this log.</p>

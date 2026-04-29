@@ -201,15 +201,8 @@ function HomeInner() {
     const total = entries.length;
     const pending = entries.filter(e => (e.status || 'Pending').toLowerCase() === 'pending').length;
     const completed = entries.filter(e => (e.status || '').toLowerCase() === 'completed').length;
-    
-    // Count forwarded today
-    const today = new Date().toISOString().split('T')[0];
-    const forwardedToday = entries.filter(e => {
-      const lastStep = e.steps.length > 0 ? e.steps[e.steps.length - 1] : null;
-      return lastStep?.dateForwarded === today;
-    }).length;
 
-    return { total, pending, completed, forwardedToday };
+    return { total, pending, completed };
   }, [entries]);
 
   if (!isLoaded) return null;
@@ -285,7 +278,7 @@ function HomeInner() {
           </div>
 
           {/* Quick Stats Grid */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6">
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mt-6">
             <div className="bg-white/60 dark:bg-emerald-900/20 backdrop-blur-md border border-emerald-100 dark:border-emerald-800/50 p-4 rounded-2xl shadow-sm">
               <div className="text-[10px] font-black text-emerald-600/60 dark:text-emerald-400/60 uppercase tracking-widest mb-1">Total Registry</div>
               <div className="text-2xl font-black text-emerald-900 dark:text-emerald-50">{stats.total}</div>
@@ -297,13 +290,6 @@ function HomeInner() {
             <div className="bg-white/60 dark:bg-emerald-900/20 backdrop-blur-md border border-emerald-100 dark:border-emerald-800/50 p-4 rounded-2xl shadow-sm">
               <div className="text-[10px] font-black text-emerald-600/60 dark:text-emerald-400/60 uppercase tracking-widest mb-1">Completed</div>
               <div className="text-2xl font-black text-emerald-600 dark:text-emerald-400">{stats.completed}</div>
-            </div>
-            <div className="bg-white/60 dark:bg-emerald-900/20 backdrop-blur-md border border-emerald-100 dark:border-emerald-800/50 p-4 rounded-2xl shadow-sm ring-2 ring-emerald-500/20 ring-offset-2 ring-offset-emerald-50 dark:ring-offset-emerald-950">
-              <div className="text-[10px] font-black text-emerald-600 dark:text-emerald-400 uppercase tracking-widest mb-1 flex items-center gap-1.5">
-                <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></div>
-                Forwarded Today
-              </div>
-              <div className="text-2xl font-black text-emerald-700 dark:text-emerald-300">{stats.forwardedToday}</div>
             </div>
           </div>
         </header>
