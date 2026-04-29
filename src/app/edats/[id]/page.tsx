@@ -47,6 +47,7 @@ const normalizeLog = (value: unknown): EDATLog => {
         actionTaken: String(s.actionTaken || ''),
         actionRequired: Array.isArray(s.actionRequired) ? s.actionRequired : [],
         receiver: String(s.receiver || ''),
+        section: String(s.section || ''),
         dueIn: (s.dueIn === 'technical' || s.dueIn === 'highlyTechnical' ? s.dueIn : 'simple') as DueInType,
         dateForwarded: String(s.dateForwarded || '').slice(0, 10),
         dateReceived: s.dateReceived ? String(s.dateReceived).slice(0, 10) : null,
@@ -100,6 +101,7 @@ export default function EntryDetailsPage() {
   // Forwarding state
   const [forwardData, setForwardData] = useState({
     receiver: '',
+    section: '',
     actionTaken: '',
     actionRequired: [] as string[],
     dueIn: 'simple' as DueInType,
@@ -226,6 +228,7 @@ export default function EntryDetailsPage() {
         body: JSON.stringify({
           completeStep: true,
           forwardTo: forwardData.receiver,
+          section: forwardData.section,
           actionTaken: forwardData.actionTaken,
           actionRequired: forwardData.actionRequired,
           dueIn: forwardData.dueIn,
@@ -240,6 +243,7 @@ export default function EntryDetailsPage() {
       setSavedLog(updated);
       setForwardData({
         receiver: '',
+        section: '',
         actionTaken: '',
         actionRequired: [],
         dueIn: 'simple',
@@ -288,6 +292,15 @@ export default function EntryDetailsPage() {
 
   const lastStep = log.steps.length > 0 ? log.steps[log.steps.length - 1] : null;
   const isPending = lastStep?.status === 'Pending' && log.status !== 'Completed';
+  const lockedSection = useMemo(() => {
+    const found = [...log.steps].reverse().find(s => Boolean((s.section || '').trim()));
+    return (found?.section || '').trim();
+  }, [log.steps]);
+
+  useEffect(() => {
+    if (!lockedSection) return;
+    setForwardData((prev) => (prev.section === lockedSection ? prev : { ...prev, section: lockedSection }));
+  }, [lockedSection]);
 
   const formattedDate = currentTime.toLocaleDateString('en-US', {
     weekday: 'short',
@@ -445,6 +458,13 @@ export default function EntryDetailsPage() {
                                   </div>
                                 ) : null}
 
+                                {step.section?.trim() ? (
+                                  <div>
+                                    <div className="text-xs font-bold text-emerald-700/60 dark:text-emerald-400/60 uppercase mb-1">Section</div>
+                                    <div className="text-base font-semibold text-emerald-900 dark:text-emerald-50">{step.section}</div>
+                                  </div>
+                                ) : null}
+
                                 {step.actionRequired.length > 0 ? (
                                   <div>
                                     <div className="text-xs font-bold text-emerald-700/60 dark:text-emerald-400/60 uppercase mb-1">Action Required</div>
@@ -501,7 +521,7 @@ export default function EntryDetailsPage() {
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                     <div className="space-y-2">
                       <label className="text-xs font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-wider">
                         Next Receiver
@@ -510,6 +530,16 @@ export default function EntryDetailsPage() {
                         value={forwardData.receiver}
                         onChange={e => setForwardData(prev => ({ ...prev, receiver: e.target.value }))}
                         placeholder="Who is receiving this or finalizing it?"
+                        className="w-full p-2.5 text-sm border border-emerald-200 dark:border-emerald-800 rounded-lg bg-white dark:bg-emerald-950/30 outline-none focus:border-emerald-500"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-xs font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-wider">Section</label>
+                      <input
+                        value={forwardData.section}
+                        onChange={e => setForwardData(prev => ({ ...prev, section: e.target.value }))}
+                        placeholder={lockedSection ? 'Locked' : 'Section / Unit (optional)'}
+                        disabled={Boolean(lockedSection)}
                         className="w-full p-2.5 text-sm border border-emerald-200 dark:border-emerald-800 rounded-lg bg-white dark:bg-emerald-950/30 outline-none focus:border-emerald-500"
                       />
                     </div>
@@ -525,7 +555,7 @@ export default function EntryDetailsPage() {
                         <option value="highlyTechnical">Highly Technical (20 days)</option>
                       </select>
                     </div>
-                    <div className="md:col-span-2 space-y-2">
+                    <div className="md:col-span-3 space-y-2">
                       <label className="text-xs font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-wider">Actions Required (From next receiver)</label>
                       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
                         {ACTION_REQUIRED_OPTIONS.map(opt => (

@@ -18,6 +18,7 @@ type StepRow = RowDataPacket & {
   action_taken: string | null;
   action_required: string | null;
   receiver: string | null;
+  section: string | null;
   due_in: string;
   date_forwarded: Date | null;
   date_received: Date | null;
@@ -147,6 +148,7 @@ export async function GET(request: Request) {
         actionTaken: step.action_taken,
         actionRequired: parseActionRequired(step.action_required),
         receiver: step.receiver,
+        section: step.section,
         dueIn: step.due_in,
         dateForwarded: step.date_forwarded,
         dateReceived: step.date_received,
@@ -171,6 +173,8 @@ export async function POST(request: Request) {
     try {
       const sender = typeof data.sender === 'string' ? data.sender.trim() : '';
       const receiver = typeof data.receiver === 'string' ? data.receiver.trim() : '';
+      const sectionRaw = typeof data.section === 'string' ? data.section.trim() : '';
+      const section = sectionRaw ? sectionRaw : null;
       const subject = typeof data.subject === 'string' ? data.subject.trim() : '';
       const documentType = typeof data.documentType === 'string' ? data.documentType.trim() : '';
       if (!sender || !receiver || !subject) {
@@ -221,8 +225,8 @@ export async function POST(request: Request) {
 
       await conn.query(
         `INSERT INTO edats_steps 
-        (edats_number, tracking_number, step_number, sender, action_taken, action_required, receiver, due_in, date_forwarded, status) 
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (edats_number, tracking_number, step_number, sender, action_taken, action_required, receiver, section, due_in, date_forwarded, status) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           edatsNumber,
           trackingNumber,
@@ -231,6 +235,7 @@ export async function POST(request: Request) {
           initialActionTaken,
           JSON.stringify(parseActionRequired(data.actionRequired)),
           receiver,
+          section,
           normalizeDueIn(data.dueIn),
           dateForwarded,
           'Pending',

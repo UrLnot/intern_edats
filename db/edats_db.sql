@@ -73,6 +73,7 @@ CREATE TABLE IF NOT EXISTS `edats_steps` (
   `action_taken` text COLLATE utf8mb4_unicode_ci,
   `action_required` text COLLATE utf8mb4_unicode_ci,
   `receiver` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `section` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `due_in` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT 'simple',
   `date_forwarded` date DEFAULT NULL,
   `date_received` date DEFAULT NULL,

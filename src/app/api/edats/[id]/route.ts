@@ -18,6 +18,7 @@ type StepRow = RowDataPacket & {
   action_taken: string | null;
   action_required: string | null;
   receiver: string | null;
+  section: string | null;
   due_in: string;
   date_forwarded: Date | null;
   date_received: Date | null;
@@ -89,6 +90,7 @@ export async function GET(
         actionTaken: step.action_taken,
         actionRequired: parseActionRequired(step.action_required),
         receiver: step.receiver,
+        section: step.section,
         dueIn: step.due_in,
         dateForwarded: step.date_forwarded,
         dateReceived: step.date_received,
@@ -113,6 +115,7 @@ export async function PUT(
     const { id } = await params;
     const data = await request.json();
     const forwardTo = typeof data.forwardTo === 'string' ? data.forwardTo.trim() : '';
+    const sectionRaw = typeof data.section === 'string' ? data.section.trim() : '';
     const actionTaken = typeof data.actionTaken === 'string' ? data.actionTaken.trim() : '';
     if (typeof data.forwardTo === 'string' && !forwardTo) {
       return NextResponse.json({ error: 'Receiver is required.' }, { status: 400 });
@@ -147,6 +150,17 @@ export async function PUT(
           ? lastStep.receiver.trim()
           : (typeof lastStep?.sender === 'string' && lastStep.sender.trim() ? lastStep.sender.trim() : 'Unknown');
 
+      const [sectionRows] = await conn.query<Array<RowDataPacket & { section: string | null }>>(
+        'SELECT section FROM edats_steps WHERE tracking_number = ? AND section IS NOT NULL AND section <> "" ORDER BY step_number DESC LIMIT 1',
+        [id]
+      );
+      const lockedSection = (sectionRows[0]?.section ?? '').trim();
+      if (lockedSection && sectionRaw && sectionRaw !== lockedSection) {
+        return NextResponse.json({ error: `Section is locked to "${lockedSection}".` }, { status: 400 });
+      }
+      const effectiveSection = (lockedSection || sectionRaw).trim();
+      const section = effectiveSection ? effectiveSection : null;
+
       if (data.finalizeLog) {
         if (!actionTaken) {
           return NextResponse.json({ error: 'Action taken is required.' }, { status: 400 });
@@ -172,8 +186,8 @@ export async function PUT(
 
         await conn.query(
           `INSERT INTO edats_steps
-          (edats_number, tracking_number, step_number, sender, action_taken, action_required, receiver, due_in, date_forwarded, date_received, time_received, status)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          (edats_number, tracking_number, step_number, sender, action_taken, action_required, receiver, section, due_in, date_forwarded, date_received, time_received, status)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             edatsNumberFinal,
             id,
@@ -182,6 +196,7 @@ export async function PUT(
             actionTaken,
             JSON.stringify([]),
             null,
+            section,
             'simple',
             getManilaDateYYYYMMDD(now),
             getManilaDateYYYYMMDD(now),
@@ -214,8 +229,8 @@ export async function PUT(
 
         await conn.query(
           `INSERT INTO edats_steps 
-          (edats_number, tracking_number, step_number, sender, action_taken, action_required, receiver, due_in, date_forwarded, status) 
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          (edats_number, tracking_number, step_number, sender, action_taken, action_required, receiver, section, due_in, date_forwarded, status) 
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             edatsNumberNext,
             id,
@@ -224,6 +239,7 @@ export async function PUT(
             actionTaken,
             JSON.stringify(parseActionRequired(data.actionRequired)),
             forwardTo,
+            section,
             dueIn,
             getManilaDateYYYYMMDD(now),
             'Pending'

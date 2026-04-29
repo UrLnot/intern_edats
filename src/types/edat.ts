@@ -26,6 +26,7 @@ export interface EDATStep {
   actionTaken: string;
   actionRequired: string[];
   receiver: string;
+  section: string;
   dueIn: DueInType;
   dateForwarded: string; // YYYY-MM-DD
   dateReceived: string | null; // YYYY-MM-DD

@@ -48,6 +48,7 @@ export default function EDATCards({ entries, onDelete, onView, highlightedId }: 
           : (log.status?.toLowerCase() === 'completed'
               ? (latestStep?.sender || '-')
               : '-');
+        const currentSection = (latestPendingStep?.section || '').trim();
 
         return (
           <div
@@ -138,6 +139,14 @@ export default function EDATCards({ entries, onDelete, onView, highlightedId }: 
               <div className="text-sm font-bold text-emerald-900 dark:text-emerald-50 truncate pl-3.5">
                 {currentHolder}
               </div>
+              {currentSection ? (
+                <div className="mt-1 pl-3.5 border-l-2 border-emerald-200 dark:border-emerald-800">
+                  <span className="text-[9px] font-black uppercase tracking-tight text-emerald-500/70 block mb-0.5">Section</span>
+                  <p className="text-[11px] text-emerald-700 dark:text-emerald-300 line-clamp-1 italic">
+                    {currentSection}
+                  </p>
+                </div>
+              ) : null}
               {lastActionStep?.actionTaken && (
                 <div className="mt-1 pl-3.5 border-l-2 border-emerald-200 dark:border-emerald-800">
                   <span className="text-[9px] font-black uppercase tracking-tight text-emerald-500/70 block mb-0.5">Last Action Taken</span>
@@ -157,7 +166,7 @@ export default function EDATCards({ entries, onDelete, onView, highlightedId }: 
               {log.steps.length > 0 ? (
                 <div className="relative overflow-x-auto px-1">
                   {(() => {
-                    const nodes: { name: string; action: string; isCurrent: boolean }[] = [];
+                    const nodes: { name: string; action: string; section?: string; isCurrent: boolean }[] = [];
                     
                     log.steps.forEach((step) => {
                       const sender = (step.sender || 'Unknown').trim() || 'Unknown';
@@ -167,7 +176,7 @@ export default function EDATCards({ entries, onDelete, onView, highlightedId }: 
                       if (!step.receiver) return;
 
                       const receiver = step.receiver.trim();
-                      if (step.status === 'Pending') nodes.push({ name: receiver, action: 'Pending', isCurrent: true });
+                      if (step.status === 'Pending') nodes.push({ name: receiver, action: 'Pending', section: (step.section || '').trim() || undefined, isCurrent: true });
                     });
 
                     return (
@@ -196,6 +205,13 @@ export default function EDATCards({ entries, onDelete, onView, highlightedId }: 
                             }`}>
                               {node.action}
                             </span>
+                            {node.section ? (
+                              <span className={`text-[8px] text-center line-clamp-1 w-full px-1 leading-tight mt-0.5 ${
+                                node.isCurrent ? 'text-emerald-300 font-bold' : 'text-emerald-600/70 dark:text-emerald-400/60'
+                              }`}>
+                                {node.section}
+                              </span>
+                            ) : null}
                           </div>
                         ))}
                       </div>
