@@ -19,6 +19,138 @@ export default function EDATCards({ entries, onDelete, onView, highlightedId }: 
     return 'Simple (3 days)';
   };
 
+  const formatManilaDateYYYYMMDD = (date: Date) =>
+    new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Manila',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(date);
+
+  const getManilaYYYYMMDD = () =>
+    new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Manila',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date());
+
+  const normalizeToManilaYYYYMMDD = (value: unknown): string => {
+    if (!value) return '';
+    if (typeof value === 'string') {
+      const direct = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
+      if (direct) return `${direct[1]}-${direct[2]}-${direct[3]}`;
+      const d = new Date(value);
+      if (!Number.isNaN(d.getTime())) return formatManilaDateYYYYMMDD(d);
+      const loose = /^(\d{4})-(\d{2})-(\d{2})/.exec(value.trim());
+      if (loose) return `${loose[1]}-${loose[2]}-${loose[3]}`;
+      return '';
+    }
+    if (value instanceof Date && !Number.isNaN(value.getTime())) return formatManilaDateYYYYMMDD(value);
+    return '';
+  };
+
+  const parseYYYYMMDDToUtcMidnight = (value: string) => {
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+    if (!match) return null;
+    const y = Number(match[1]);
+    const m = Number(match[2]);
+    const d = Number(match[3]);
+    if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) return null;
+    return new Date(Date.UTC(y, m - 1, d));
+  };
+
+  const parseHHMMSSToSeconds = (value: string) => {
+    const match = /^(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(value.trim());
+    if (!match) return null;
+    const h = Number(match[1]);
+    const m = Number(match[2]);
+    const s = Number(match[3] ?? '0');
+    if (![h, m, s].every(Number.isFinite)) return null;
+    if (h < 0 || h > 23 || m < 0 || m > 59 || s < 0 || s > 59) return null;
+    return h * 3600 + m * 60 + s;
+  };
+
+  const toUtcMillisFromManilaParts = (ymd: string, hms: string | null | undefined) => {
+    const dateUtc = parseYYYYMMDDToUtcMidnight(ymd);
+    if (!dateUtc) return null;
+    const seconds = hms ? parseHHMMSSToSeconds(hms) : 0;
+    if (seconds === null) return dateUtc.getTime();
+    return dateUtc.getTime() + seconds * 1000;
+  };
+
+  const formatDuration = (ms: number) => {
+    const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+    const days = Math.floor(totalSeconds / (24 * 3600));
+    const hours = Math.floor((totalSeconds % (24 * 3600)) / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    if (days > 0) return `${days}d ${hours}h`;
+    if (hours > 0) return `${hours}h ${minutes}m`;
+    return `${minutes}m`;
+  };
+
+  const addDaysUtc = (dateUtc: Date, days: number) => new Date(dateUtc.getTime() + days * 24 * 60 * 60 * 1000);
+
+  const dueDaysFor = (dueIn: EDATStep['dueIn'] | null | undefined) => {
+    if (dueIn === 'technical') return 7;
+    if (dueIn === 'highlyTechnical') return 20;
+    return 3;
+  };
+
+  const getDueStatus = (baseStep: EDATStep | null | undefined, completionStep: EDATStep | null | undefined) => {
+    const forwarded = normalizeToManilaYYYYMMDD(baseStep?.dateForwarded);
+    const forwardedUtc = forwarded ? parseYYYYMMDDToUtcMidnight(forwarded) : null;
+    if (!forwardedUtc) return null;
+
+    const todayUtc = parseYYYYMMDDToUtcMidnight(getManilaYYYYMMDD());
+    if (!todayUtc) return null;
+
+    const dueDays = dueDaysFor(baseStep?.dueIn);
+    const dueUtc = addDaysUtc(forwardedUtc, dueDays);
+
+    const completionDate = normalizeToManilaYYYYMMDD(completionStep?.dateReceived || completionStep?.dateForwarded);
+    const completionUtc = completionDate ? parseYYYYMMDDToUtcMidnight(completionDate) : null;
+
+    if (completionUtc) {
+      const dueDatePart = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'Asia/Manila',
+        year: 'numeric',
+        month: 'short',
+        day: '2-digit',
+      }).format(dueUtc);
+      const dueDateStr = dueDatePart;
+      const lateDays = Math.round((completionUtc.getTime() - dueUtc.getTime()) / (24 * 60 * 60 * 1000));
+      if (lateDays > 0) return { label: `Done late ${lateDays}d`, dueDateStr, tone: 'overdue' as const };
+      return { label: 'Done', dueDateStr, tone: 'ok' as const };
+    }
+
+    const diffDays = Math.round((dueUtc.getTime() - todayUtc.getTime()) / (24 * 60 * 60 * 1000));
+    const dueDatePart = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Asia/Manila',
+      year: 'numeric',
+      month: 'short',
+      day: '2-digit',
+    }).format(dueUtc);
+    const dueDateStr = diffDays === 0 ? `${dueDatePart} 11:59 PM` : dueDatePart;
+    if (diffDays < 0) return { label: `Overdue ${Math.abs(diffDays)}d`, dueDateStr, tone: 'overdue' as const };
+    if (diffDays === 0) return { label: 'Due today', dueDateStr, tone: 'due' as const };
+    if (diffDays === 1) return { label: '1d left', dueDateStr, tone: 'ok' as const };
+    return { label: `${diffDays}d left`, dueDateStr, tone: 'ok' as const };
+  };
+
+  const getDocumentTotalDuration = (log: EDATLog) => {
+    if ((log.status || '').toLowerCase() !== 'completed') return null;
+    const startYmd = normalizeToManilaYYYYMMDD(log.steps[0]?.dateForwarded);
+    const last = log.steps.length > 0 ? log.steps[log.steps.length - 1] : null;
+    const endYmd = normalizeToManilaYYYYMMDD(last?.dateReceived || last?.dateForwarded);
+    if (!startYmd || !endYmd) return null;
+
+    const startMs = toUtcMillisFromManilaParts(startYmd, '00:00:00');
+    const endMs = toUtcMillisFromManilaParts(endYmd, last?.timeReceived || '00:00:00');
+    if (startMs === null || endMs === null) return null;
+    return formatDuration(endMs - startMs);
+  };
+
   const formatTimeReceived = (timeStr: string | null | undefined) => {
     if (!timeStr) return '-';
     const cleaned = timeStr.split('.')[0] ?? '';
@@ -42,6 +174,10 @@ export default function EDATCards({ entries, onDelete, onView, highlightedId }: 
         const firstStep = log.steps.length > 0 ? log.steps[0] : null;
         const latestPendingStep = [...log.steps].reverse().find(s => s.status === 'Pending') ?? null;
         const displayStep = latestPendingStep ?? latestStep;
+        const baseDueStep = firstStep ?? displayStep;
+        const completionStep = log.status?.toLowerCase() === 'completed' ? latestStep : null;
+        const dueCountdown = getDueStatus(baseDueStep, completionStep);
+        const documentTotalDuration = getDocumentTotalDuration(log);
         const lastActionStep = [...log.steps].reverse().find(s => Boolean((s.actionTaken || '').trim())) ?? null;
         const currentHolder = latestPendingStep?.receiver
           ? latestPendingStep.receiver
@@ -82,7 +218,6 @@ export default function EDATCards({ entries, onDelete, onView, highlightedId }: 
               <div className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-600/60 dark:text-emerald-400/60 mb-1">Document IDs</div>
               <div className="flex flex-col gap-0.5">
                 <span className="text-sm font-bold text-emerald-900 dark:text-emerald-50 font-mono tracking-tight">{log.trackingNumber}</span>
-                <span className="text-xs font-medium text-emerald-700/70 dark:text-emerald-400/70 font-mono">{latestStep?.edatsNumber || '-'}</span>
               </div>
             </div>
 
@@ -124,7 +259,16 @@ export default function EDATCards({ entries, onDelete, onView, highlightedId }: 
                   <Clock size={12} />
                   <span className="text-[9px] font-black uppercase tracking-wider">Due</span>
                 </div>
-                <span className="text-xs font-bold text-emerald-800 dark:text-emerald-100 truncate">{formatDueIn(displayStep?.dueIn)}</span>
+                <span
+                  className={`text-xs font-bold truncate ${
+                    dueCountdown?.tone === 'overdue'
+                      ? 'text-red-600 dark:text-red-400'
+                      : 'text-emerald-800 dark:text-emerald-100'
+                  }`}
+                  title={dueCountdown ? `Due ${dueCountdown.dueDateStr}` : undefined}
+                >
+                  {dueCountdown ? dueCountdown.label : formatDueIn(displayStep?.dueIn)}
+                </span>
               </div>
             </div>
 
@@ -227,10 +371,21 @@ export default function EDATCards({ entries, onDelete, onView, highlightedId }: 
           {/* Action Footer */}
           <div className="flex items-center justify-between p-3 bg-emerald-50/50 dark:bg-emerald-900/40 border-t border-emerald-100 dark:border-emerald-800/50">
             <div className="flex flex-col">
-              <span className="text-[8px] font-black uppercase tracking-widest text-emerald-600/40 dark:text-emerald-400/40">Received On</span>
-              <span className="text-[10px] font-bold text-emerald-800/60 dark:text-emerald-300/60 font-mono">
-                {latestStep?.dateReceived ? `${format(new Date(latestStep.dateReceived), 'MM/dd/yy')} ${formatTimeReceived(latestStep.timeReceived)}` : 'Not yet'}
-              </span>
+              {(log.status || '').toLowerCase() === 'completed' ? (
+                <>
+                  <span className="text-[8px] font-black uppercase tracking-widest text-emerald-600/40 dark:text-emerald-400/40">Finished In</span>
+                  <span className="text-[10px] font-bold text-emerald-800/60 dark:text-emerald-300/60 font-mono">
+                    {documentTotalDuration || '-'}
+                  </span>
+                </>
+              ) : (
+                <>
+                  <span className="text-[8px] font-black uppercase tracking-widest text-emerald-600/40 dark:text-emerald-400/40">Received On</span>
+                  <span className="text-[10px] font-bold text-emerald-800/60 dark:text-emerald-300/60 font-mono">
+                    {latestStep?.dateReceived ? `${format(new Date(latestStep.dateReceived), 'MM/dd/yy')} ${formatTimeReceived(latestStep.timeReceived)}` : 'Not yet'}
+                  </span>
+                </>
+              )}
             </div>
             <div className="flex gap-2">
               <button 

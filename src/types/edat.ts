@@ -4,6 +4,7 @@ export type StepStatus = 'Pending' | 'Completed' | 'Passed Due';
 export const ACTION_REQUIRED_OPTIONS = [
   'For appropriate action',
   'For information/record/file',
+  'For filing',
   'For evaluation/review',
   'For comment/recommendation',
   'For investigation',
@@ -19,12 +20,12 @@ export const ACTION_REQUIRED_OPTIONS = [
 ] as const;
 
 export interface EDATStep {
-  edatsNumber: string;
   trackingNumber: string;
   stepNumber: number;
   sender: string;
   actionTaken: string;
   actionRequired: string[];
+  remarks: string;
   receiver: string;
   section: string;
   dueIn: DueInType;
@@ -40,6 +41,7 @@ export interface EDATLog {
   subject: string;
   documentType: string;
   status: string;
+  archived: boolean;
   createdAt: string;
   steps: EDATStep[];
 }

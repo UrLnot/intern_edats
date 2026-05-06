@@ -32,6 +32,7 @@ const EMPTY_LOG_DATA = {
   sender: '',
   receiver: '',
   actionRequired: [] as string[],
+  remarks: '',
   dueIn: 'simple' as const,
 };
 
@@ -45,7 +46,7 @@ function NewEntryPageContent() {
     type: 'success'
   });
   const [formData, setFormData] = useState({ ...EMPTY_LOG_DATA });
-  const [generatedIds, setGeneratedIds] = useState<{ trackingNumber: string; edatsNumber: string } | null>(null);
+  const [generatedIds, setGeneratedIds] = useState<{ trackingNumber: string } | null>(null);
   const [attachments, setAttachments] = useState<File[]>([]);
 
   useEffect(() => {
@@ -66,7 +67,6 @@ function NewEntryPageContent() {
         if (!cancelled) {
           setGeneratedIds({
             trackingNumber: typeof data.trackingNumber === 'string' ? data.trackingNumber : '',
-            edatsNumber: typeof data.edatsNumber === 'string' ? data.edatsNumber : '',
           });
         }
       } catch {}
@@ -224,14 +224,10 @@ function NewEntryPageContent() {
           </div>
 
           <form onSubmit={handleSubmit} className="p-4 sm:p-6 space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400 mb-1">Tracking #</label>
                 <input value={generatedIds?.trackingNumber || ''} readOnly className="w-full p-2.5 text-base border rounded-lg bg-white dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800 text-emerald-900 dark:text-emerald-50" />
-              </div>
-              <div>
-                <label className="block text-sm font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400 mb-1">eDTS #</label>
-                <input value={generatedIds?.edatsNumber || ''} readOnly className="w-full p-2.5 text-base border rounded-lg bg-white dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800 text-emerald-900 dark:text-emerald-50" />
               </div>
               <div>
                 <label className="block text-sm font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400 mb-1">Status</label>
@@ -268,6 +264,18 @@ function NewEntryPageContent() {
                   </label>
                 ))}
               </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400 mb-1">Remarks</label>
+              <textarea
+                name="remarks"
+                value={formData.remarks}
+                onChange={handleChange}
+                rows={2}
+                placeholder="Optional remarks"
+                className="w-full p-2.5 text-base border rounded-lg bg-white dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800 text-emerald-900 dark:text-emerald-50"
+              />
             </div>
 
             <div>

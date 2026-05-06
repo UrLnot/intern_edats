@@ -12,6 +12,7 @@ const EMPTY_LOG: EDATLog = {
   subject: '',
   documentType: '',
   status: 'Pending',
+  archived: false,
   createdAt: '',
   steps: [],
 };
@@ -34,23 +35,181 @@ const getCurrentManilaDateTime = () => {
   return { date, time };
 };
 
+const formatManilaDateYYYYMMDD = (date: Date) =>
+  new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Manila',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(date);
+
+const normalizeToManilaYYYYMMDD = (value: unknown): string => {
+  if (!value) return '';
+  if (typeof value === 'string') {
+    const direct = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
+    if (direct) return `${direct[1]}-${direct[2]}-${direct[3]}`;
+    const d = new Date(value);
+    if (!Number.isNaN(d.getTime())) return formatManilaDateYYYYMMDD(d);
+    const loose = /^(\d{4})-(\d{2})-(\d{2})/.exec(value.trim());
+    if (loose) return `${loose[1]}-${loose[2]}-${loose[3]}`;
+    return '';
+  }
+  if (value instanceof Date && !Number.isNaN(value.getTime())) return formatManilaDateYYYYMMDD(value);
+  return '';
+};
+
+const parseYYYYMMDDToUtcMidnight = (value: string) => {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return null;
+  const y = Number(match[1]);
+  const m = Number(match[2]);
+  const d = Number(match[3]);
+  if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) return null;
+  return new Date(Date.UTC(y, m - 1, d));
+};
+
+const parseHHMMSSToSeconds = (value: string) => {
+  const match = /^(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(value.trim());
+  if (!match) return null;
+  const h = Number(match[1]);
+  const m = Number(match[2]);
+  const s = Number(match[3] ?? '0');
+  if (![h, m, s].every(Number.isFinite)) return null;
+  if (h < 0 || h > 23 || m < 0 || m > 59 || s < 0 || s > 59) return null;
+  return h * 3600 + m * 60 + s;
+};
+
+const getManilaDateTimeParts = (date: Date) => {
+  const ymd = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Manila',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(date);
+  const hms = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Manila',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).format(date);
+  return { ymd, hms };
+};
+
+const toUtcMillisFromManilaParts = (ymd: string, hms: string | null | undefined) => {
+  const dateUtc = parseYYYYMMDDToUtcMidnight(ymd);
+  if (!dateUtc) return null;
+  const seconds = hms ? parseHHMMSSToSeconds(hms) : 0;
+  if (seconds === null) return dateUtc.getTime();
+  return dateUtc.getTime() + seconds * 1000;
+};
+
+const addDaysUtc = (dateUtc: Date, days: number) => new Date(dateUtc.getTime() + days * 24 * 60 * 60 * 1000);
+
+const dueDaysFor = (dueIn: DueInType | null | undefined) => {
+  if (dueIn === 'technical') return 7;
+  if (dueIn === 'highlyTechnical') return 20;
+  return 3;
+};
+
+const getDueCountdown = (currentTime: Date, baseStep: EDATStep | null | undefined, completionStep: EDATStep | null | undefined) => {
+  const forwarded = (baseStep?.dateForwarded || '').slice(0, 10);
+  const forwardedUtc = forwarded ? parseYYYYMMDDToUtcMidnight(forwarded) : null;
+  if (!forwardedUtc) return null;
+
+  const { ymd: todayYmd } = getManilaDateTimeParts(currentTime);
+  const todayUtc = parseYYYYMMDDToUtcMidnight(todayYmd);
+  if (!todayUtc) return null;
+
+  const dueDays = dueDaysFor(baseStep?.dueIn);
+  const dueUtc = addDaysUtc(forwardedUtc, dueDays);
+
+  const dueDatePart = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Manila',
+    year: 'numeric',
+    month: 'long',
+    day: '2-digit',
+  }).format(dueUtc);
+  const dueDateStr = `${dueDatePart} 11:59 PM`;
+
+  if (completionStep) {
+    const completionYmd = ((completionStep.dateReceived || completionStep.dateForwarded || '') as string).slice(0, 10);
+    const completionUtc = completionYmd ? parseYYYYMMDDToUtcMidnight(completionYmd) : null;
+    if (!completionUtc) return null;
+    const lateDays = Math.round((completionUtc.getTime() - dueUtc.getTime()) / (24 * 60 * 60 * 1000));
+    if (lateDays > 0) return { label: `Completed late by ${lateDays} day${lateDays === 1 ? '' : 's'}`, dueDateStr, tone: 'overdue' as const };
+    return { label: 'Completed', dueDateStr, tone: 'ok' as const };
+  }
+
+  const diffDays = Math.round((dueUtc.getTime() - todayUtc.getTime()) / (24 * 60 * 60 * 1000));
+  if (diffDays < 0) return { label: `Overdue by ${Math.abs(diffDays)} day${Math.abs(diffDays) === 1 ? '' : 's'}`, dueDateStr, tone: 'overdue' as const };
+  if (diffDays === 0) return { label: 'Due today', dueDateStr, tone: 'due' as const };
+  if (diffDays === 1) return { label: '1 day left', dueDateStr, tone: 'ok' as const };
+  return { label: `${diffDays} days left`, dueDateStr, tone: 'ok' as const };
+};
+
+const formatDuration = (ms: number) => {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const days = Math.floor(totalSeconds / (24 * 3600));
+  const hours = Math.floor((totalSeconds % (24 * 3600)) / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  if (days > 0) return `${days}d ${hours}h`;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  return `${minutes}m`;
+};
+
+const getStepDuration = (currentTime: Date, step: EDATStep) => {
+  const startYmd = (step.dateForwarded || '').slice(0, 10);
+  const createdAtDate = step.createdAt ? new Date(step.createdAt) : null;
+  const createdAtParts = createdAtDate && !Number.isNaN(createdAtDate.getTime()) ? getManilaDateTimeParts(createdAtDate) : null;
+  const startMs = startYmd
+    ? (createdAtParts && createdAtParts.ymd === startYmd
+        ? toUtcMillisFromManilaParts(createdAtParts.ymd, createdAtParts.hms)
+        : toUtcMillisFromManilaParts(startYmd, '00:00:00'))
+    : (createdAtParts ? toUtcMillisFromManilaParts(createdAtParts.ymd, createdAtParts.hms) : null);
+  if (startMs === null) return null;
+
+  const endMs =
+    step.dateReceived
+      ? toUtcMillisFromManilaParts(step.dateReceived.slice(0, 10), step.timeReceived || '00:00:00')
+      : (() => {
+          const { ymd, hms } = getManilaDateTimeParts(currentTime);
+          return toUtcMillisFromManilaParts(ymd, hms);
+        })();
+
+  if (endMs === null) return null;
+  const label = step.dateReceived ? 'Took' : 'Elapsed';
+  return `${label} ${formatDuration(endMs - startMs)}`;
+};
+
+const getDocumentTotalDuration = (baseStep: EDATStep | null | undefined, completionStep: EDATStep | null | undefined) => {
+  const startYmd = (baseStep?.dateForwarded || '').slice(0, 10);
+  const endYmd = ((completionStep?.dateReceived || completionStep?.dateForwarded || '') as string).slice(0, 10);
+  if (!startYmd || !endYmd) return null;
+
+  const startMs = toUtcMillisFromManilaParts(startYmd, '00:00:00');
+  const endMs = toUtcMillisFromManilaParts(endYmd, completionStep?.timeReceived || '00:00:00');
+  if (startMs === null || endMs === null) return null;
+  return formatDuration(endMs - startMs);
+};
+
 const normalizeLog = (value: unknown): EDATLog => {
   if (!value || typeof value !== 'object') return { ...EMPTY_LOG };
   const v = value as Record<string, unknown>;
   
   const steps = Array.isArray(v.steps) 
     ? v.steps.map((s: any) => ({
-        edatsNumber: String(s.edatsNumber || ''),
         trackingNumber: String(s.trackingNumber || ''),
         stepNumber: Number(s.stepNumber || 0),
         sender: String(s.sender || ''),
         actionTaken: String(s.actionTaken || ''),
         actionRequired: Array.isArray(s.actionRequired) ? s.actionRequired : [],
+        remarks: String(s.remarks || ''),
         receiver: String(s.receiver || ''),
         section: String(s.section || ''),
         dueIn: (s.dueIn === 'technical' || s.dueIn === 'highlyTechnical' ? s.dueIn : 'simple') as DueInType,
-        dateForwarded: String(s.dateForwarded || '').slice(0, 10),
-        dateReceived: s.dateReceived ? String(s.dateReceived).slice(0, 10) : null,
+        dateForwarded: normalizeToManilaYYYYMMDD(s.dateForwarded),
+        dateReceived: s.dateReceived ? normalizeToManilaYYYYMMDD(s.dateReceived) : null,
         timeReceived: s.timeReceived ? String(s.timeReceived).split('.')[0] : null,
         status: (s.status || 'Pending') as any,
         createdAt: String(s.createdAt || ''),
@@ -62,6 +221,7 @@ const normalizeLog = (value: unknown): EDATLog => {
     subject: typeof v.subject === 'string' ? v.subject : '',
     documentType: typeof v.documentType === 'string' ? v.documentType : '',
     status: typeof v.status === 'string' ? v.status : 'Pending',
+    archived: Boolean(v.archived),
     createdAt: typeof v.createdAt === 'string' ? v.createdAt : '',
     steps,
   };
@@ -104,7 +264,6 @@ export default function EntryDetailsPage() {
     section: '',
     actionTaken: '',
     actionRequired: [] as string[],
-    dueIn: 'simple' as DueInType,
   });
 
   useEffect(() => {
@@ -216,10 +375,6 @@ export default function EntryDetailsPage() {
       setToast({ show: true, message: 'Please specify a receiver.', type: 'error' });
       return;
     }
-    if (!forwardData.actionTaken.trim()) {
-      setToast({ show: true, message: 'Please specify your action taken.', type: 'error' });
-      return;
-    }
     setSaving(true);
     try {
       const response = await fetch(`/api/edats/${log.trackingNumber}`, {
@@ -231,7 +386,6 @@ export default function EntryDetailsPage() {
           section: forwardData.section,
           actionTaken: forwardData.actionTaken,
           actionRequired: forwardData.actionRequired,
-          dueIn: forwardData.dueIn,
         }),
       });
       if (!response.ok) throw new Error('Failed to forward');
@@ -246,7 +400,6 @@ export default function EntryDetailsPage() {
         section: '',
         actionTaken: '',
         actionRequired: [],
-        dueIn: 'simple',
       });
       setToast({ show: true, message: 'Document forwarded successfully!', type: 'success' });
     } catch {
@@ -257,10 +410,6 @@ export default function EntryDetailsPage() {
   };
 
   const confirmFinalize = async () => {
-    if (!forwardData.actionTaken.trim()) {
-      setToast({ show: true, message: 'Please specify your action taken.', type: 'error' });
-      return;
-    }
     setSaving(true);
     try {
       const response = await fetch(`/api/edats/${log.trackingNumber}`, {
@@ -292,6 +441,10 @@ export default function EntryDetailsPage() {
 
   const lastStep = log.steps.length > 0 ? log.steps[log.steps.length - 1] : null;
   const isPending = lastStep?.status === 'Pending' && log.status !== 'Completed';
+  const baseDueStep = log.steps.length > 0 ? log.steps[0] : null;
+  const completionStep = log.status?.toLowerCase() === 'completed' ? lastStep : null;
+  const dueCountdown = useMemo(() => getDueCountdown(currentTime, baseDueStep, completionStep), [currentTime, baseDueStep, completionStep]);
+  const documentTotalDuration = useMemo(() => getDocumentTotalDuration(baseDueStep, completionStep), [baseDueStep, completionStep]);
   const lockedSection = useMemo(() => {
     const found = [...log.steps].reverse().find(s => Boolean((s.section || '').trim()));
     return (found?.section || '').trim();
@@ -409,6 +562,24 @@ export default function EntryDetailsPage() {
                 <FieldRow label="Type of Document" editing={isEditing('documentType')} onToggle={() => toggleEdit('documentType')} onCancel={() => cancelEdit('documentType')} onSave={saveLogDetails} saving={saving}>
                   <input disabled={!isEditing('documentType')} value={log.documentType} onChange={(e) => setLogField('documentType', e.target.value)} className={inputClass(isEditing('documentType'))} />
                 </FieldRow>
+                <div className="p-3 sm:p-4 rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50/40 dark:bg-emerald-950/20">
+                  <div className="text-sm sm:text-base font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400 mb-2">Due</div>
+                  <div className={`text-base font-semibold ${
+                    dueCountdown?.tone === 'overdue'
+                      ? 'text-red-600 dark:text-red-400'
+                      : 'text-emerald-900 dark:text-emerald-50'
+                  }`}>
+                    {dueCountdown ? `${dueCountdown.label} (Due ${dueCountdown.dueDateStr})` : '-'}
+                  </div>
+                </div>
+                {documentTotalDuration ? (
+                  <div className="p-3 sm:p-4 rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50/40 dark:bg-emerald-950/20">
+                    <div className="text-sm sm:text-base font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400 mb-2">Total Time</div>
+                    <div className="text-base font-semibold text-emerald-900 dark:text-emerald-50">
+                      {documentTotalDuration}
+                    </div>
+                  </div>
+                ) : null}
               </div>
             </section>
 
@@ -424,13 +595,12 @@ export default function EntryDetailsPage() {
                     <div className="relative flex gap-6 min-w-max py-2 pr-2">
                       <div className="pointer-events-none absolute left-0 right-0 top-4 h-0.5 bg-emerald-100 dark:bg-emerald-800" />
                       {log.steps.map((step) => (
-                        <div key={step.edatsNumber} className="relative pt-8 w-[520px] flex-shrink-0">
+                        <div key={`${step.trackingNumber}-${step.stepNumber}`} className="relative pt-8 w-[520px] flex-shrink-0">
                           <div className={`absolute left-1/2 -translate-x-1/2 top-2 w-4 sm:w-5 h-4 sm:h-5 rounded-full border-2 border-white dark:border-emerald-900 z-10 ${step.status === 'Completed' ? 'bg-emerald-500' : 'bg-amber-500 animate-pulse'}`} />
                           <div className="bg-emerald-50/50 dark:bg-emerald-950/20 rounded-xl border border-emerald-100 dark:border-emerald-800 p-5">
                             <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
                               <div className="flex items-center gap-2">
                                 <span className="px-2.5 py-1 bg-emerald-700 text-white text-xs font-bold rounded uppercase tracking-wider">Step {step.stepNumber}</span>
-                                <span className="text-sm font-mono text-emerald-600 dark:text-emerald-400">{step.edatsNumber}</span>
                               </div>
                               <span className={`text-xs font-bold uppercase tracking-widest px-2.5 py-1 rounded-full ${step.status === 'Completed' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300' : 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'}`}>
                                 {step.status}
@@ -482,6 +652,7 @@ export default function EntryDetailsPage() {
                                 <div className="text-sm text-emerald-800 dark:text-emerald-200 space-y-1">
                                   <div><span className="font-semibold">Forwarded:</span> {step.dateForwarded || '-'}</div>
                                   <div><span className="font-semibold">Received:</span> {step.dateReceived ? `${step.dateReceived} ${step.timeReceived || ''}` : '-'}</div>
+                                  <div><span className="font-semibold">Duration:</span> {getStepDuration(currentTime, step) || '-'}</div>
                                 </div>
                               </div>
                             </div>
@@ -521,7 +692,28 @@ export default function EntryDetailsPage() {
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="space-y-2">
+                      <label className="text-xs font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-wider">Section</label>
+                      <select
+                        value={forwardData.section}
+                        onChange={e => setForwardData(prev => ({ ...prev, section: e.target.value }))}
+                        disabled={Boolean(lockedSection)}
+                        className="w-full p-2.5 text-sm border border-emerald-200 dark:border-emerald-800 rounded-lg bg-white dark:bg-emerald-950/30 outline-none focus:border-emerald-500"
+                      >
+                        {!lockedSection && <option value="">Select Section</option>}
+                        {(() => {
+                          const base = ['Plans and Programs', 'Monitoring and Evaluation', 'ICT', 'Statistics'];
+                          const locked = (lockedSection || '').trim();
+                          const options = locked && !base.includes(locked) ? [locked, ...base] : base;
+                          return options.map((opt) => (
+                            <option key={opt} value={opt}>
+                              {opt}
+                            </option>
+                          ));
+                        })()}
+                      </select>
+                    </div>
                     <div className="space-y-2">
                       <label className="text-xs font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-wider">
                         Next Receiver
@@ -533,29 +725,7 @@ export default function EntryDetailsPage() {
                         className="w-full p-2.5 text-sm border border-emerald-200 dark:border-emerald-800 rounded-lg bg-white dark:bg-emerald-950/30 outline-none focus:border-emerald-500"
                       />
                     </div>
-                    <div className="space-y-2">
-                      <label className="text-xs font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-wider">Section</label>
-                      <input
-                        value={forwardData.section}
-                        onChange={e => setForwardData(prev => ({ ...prev, section: e.target.value }))}
-                        placeholder={lockedSection ? 'Locked' : 'Section / Unit (optional)'}
-                        disabled={Boolean(lockedSection)}
-                        className="w-full p-2.5 text-sm border border-emerald-200 dark:border-emerald-800 rounded-lg bg-white dark:bg-emerald-950/30 outline-none focus:border-emerald-500"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <label className="text-xs font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-wider">Due In</label>
-                      <select 
-                        value={forwardData.dueIn}
-                        onChange={e => setForwardData(prev => ({ ...prev, dueIn: e.target.value as DueInType }))}
-                        className="w-full p-2.5 text-sm border border-emerald-200 dark:border-emerald-800 rounded-lg bg-white dark:bg-emerald-950/30 outline-none focus:border-emerald-500"
-                      >
-                        <option value="simple">Simple (3 days)</option>
-                        <option value="technical">Technical (7 days)</option>
-                        <option value="highlyTechnical">Highly Technical (20 days)</option>
-                      </select>
-                    </div>
-                    <div className="md:col-span-3 space-y-2">
+                    <div className="md:col-span-2 space-y-2">
                       <label className="text-xs font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-wider">Actions Required (From next receiver)</label>
                       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
                         {ACTION_REQUIRED_OPTIONS.map(opt => (
@@ -580,16 +750,6 @@ export default function EntryDetailsPage() {
                   <div className="flex flex-col sm:flex-row justify-end gap-3 pt-2">
                     <button 
                       type="button"
-                      onClick={handleFinalize}
-                      disabled={saving}
-                      className="inline-flex items-center justify-center gap-2 px-6 py-2.5 bg-white dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 font-bold rounded-xl border-2 border-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-800/40 transition-all active:scale-95 disabled:opacity-70"
-                    >
-                      <CheckCircle2 size={18} />
-                      {saving ? 'Processing...' : 'Mark as Final'}
-                    </button>
-
-                    <button 
-                      type="button"
                       onClick={async () => {
                         if (!forwardData.receiver.trim()) {
                           setToast({ show: true, message: 'Please specify a receiver.', type: 'error' });
@@ -599,10 +759,20 @@ export default function EntryDetailsPage() {
                         if (form) form.requestSubmit();
                       }}
                       disabled={saving}
-                      className="inline-flex items-center justify-center gap-2 px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl shadow-lg shadow-emerald-900/20 transition-all active:scale-95 disabled:opacity-70"
+                      className="inline-flex items-center justify-center gap-2 px-6 py-2.5 bg-white dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 font-bold rounded-xl border-2 border-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-800/40 transition-all active:scale-95 disabled:opacity-70"
                     >
                       <Send size={18} />
                       {saving ? 'Processing...' : 'Complete & Forward'}
+                    </button>
+
+                    <button 
+                      type="button"
+                      onClick={handleFinalize}
+                      disabled={saving}
+                      className="inline-flex items-center justify-center gap-2 px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl shadow-lg shadow-emerald-900/20 transition-all active:scale-95 disabled:opacity-70"
+                    >
+                      <CheckCircle2 size={18} />
+                      {saving ? 'Processing...' : 'Mark as Final'}
                     </button>
                   </div>
                 </form>

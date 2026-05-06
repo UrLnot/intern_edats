@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS `edats_logs` (
   `subject` text COLLATE utf8mb4_unicode_ci NOT NULL,
   `document_type` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
   `status` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT 'Pending',
+  `archived` tinyint(1) NOT NULL DEFAULT 0,
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`tracking_number`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -66,12 +67,12 @@ CREATE TABLE IF NOT EXISTS `edats_logs` (
 
 DROP TABLE IF EXISTS `edats_steps`;
 CREATE TABLE IF NOT EXISTS `edats_steps` (
-  `edats_number` varchar(191) COLLATE utf8mb4_unicode_ci NOT NULL,
   `tracking_number` varchar(191) COLLATE utf8mb4_unicode_ci NOT NULL,
   `step_number` int NOT NULL,
   `sender` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
   `action_taken` text COLLATE utf8mb4_unicode_ci,
   `action_required` text COLLATE utf8mb4_unicode_ci,
+  `remarks` text COLLATE utf8mb4_unicode_ci,
   `receiver` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `section` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `due_in` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT 'simple',
@@ -80,8 +81,7 @@ CREATE TABLE IF NOT EXISTS `edats_steps` (
   `time_received` time DEFAULT NULL,
   `status` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT 'Pending',
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (`edats_number`),
-  UNIQUE KEY `uniq_tracking_step` (`tracking_number`,`step_number`)
+  PRIMARY KEY (`tracking_number`,`step_number`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --

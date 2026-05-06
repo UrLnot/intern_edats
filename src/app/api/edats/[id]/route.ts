@@ -7,16 +7,17 @@ type LogRow = RowDataPacket & {
   subject: string;
   document_type: string;
   status: string;
+  archived: number;
   created_at: Date;
 };
 
 type StepRow = RowDataPacket & {
-  edats_number: string;
   tracking_number: string;
   step_number: number;
   sender: string;
   action_taken: string | null;
   action_required: string | null;
+  remarks: string | null;
   receiver: string | null;
   section: string | null;
   due_in: string;
@@ -81,14 +82,15 @@ export async function GET(
       subject: log.subject,
       documentType: log.document_type,
       status: log.status,
+      archived: Boolean(log.archived),
       createdAt: log.created_at,
       steps: stepRows.map(step => ({
-        edatsNumber: step.edats_number,
         trackingNumber: step.tracking_number,
         stepNumber: step.step_number,
         sender: step.sender,
         actionTaken: step.action_taken,
         actionRequired: parseActionRequired(step.action_required),
+        remarks: step.remarks,
         receiver: step.receiver,
         section: step.section,
         dueIn: step.due_in,
@@ -131,20 +133,20 @@ export async function PUT(
         const values: any[] = [];
         if (data.subject) { updates.push('subject = ?'); values.push(data.subject); }
         if (data.documentType) { updates.push('document_type = ?'); values.push(data.documentType); }
-        if (data.finalizeLog) { updates.push('status = ?'); values.push('Completed'); }
+        if (data.finalizeLog) { updates.push('status = ?'); values.push('Completed'); updates.push('archived = ?'); values.push(1); }
         values.push(id);
         await conn.query(`UPDATE edats_logs SET ${updates.join(', ')} WHERE tracking_number = ?`, values);
       }
 
       const now = new Date();
-      const dueIn = data.dueIn === 'technical' || data.dueIn === 'highlyTechnical' ? data.dueIn : 'simple';
 
-      const [lastStepRows] = await conn.query<Array<RowDataPacket & { step_number: number; sender: string; receiver: string | null }>>(
-        'SELECT step_number, sender, receiver FROM edats_steps WHERE tracking_number = ? ORDER BY step_number DESC LIMIT 1 FOR UPDATE',
+      const [lastStepRows] = await conn.query<Array<RowDataPacket & { step_number: number; sender: string; receiver: string | null; due_in: string }>>(
+        'SELECT step_number, sender, receiver, due_in FROM edats_steps WHERE tracking_number = ? ORDER BY step_number DESC LIMIT 1 FOR UPDATE',
         [id]
       );
       const lastStep = lastStepRows[0];
       const lastStepNumber = lastStep?.step_number ? Number(lastStep.step_number) : 0;
+      const dueInFromLast = lastStep?.due_in === 'technical' || lastStep?.due_in === 'highlyTechnical' ? lastStep.due_in : 'simple';
       const currentHolder =
         (typeof lastStep?.receiver === 'string' && lastStep.receiver.trim())
           ? lastStep.receiver.trim()
@@ -162,10 +164,6 @@ export async function PUT(
       const section = effectiveSection ? effectiveSection : null;
 
       if (data.finalizeLog) {
-        if (!actionTaken) {
-          return NextResponse.json({ error: 'Action taken is required.' }, { status: 400 });
-        }
-
         if (lastStepNumber) {
           await conn.query(
             'UPDATE edats_steps SET status = ?, date_received = ?, time_received = ? WHERE tracking_number = ? AND step_number = ?',
@@ -173,31 +171,19 @@ export async function PUT(
           );
         }
 
-        const year = now.getFullYear().toString();
-        const month = (now.getMonth() + 1).toString().padStart(2, '0');
-        const like = `EDTS-${year}-${month}-%`;
-        const [seqRows] = await conn.query<Array<RowDataPacket & { edats_number: string }>>(
-          'SELECT edats_number FROM edats_steps WHERE edats_number LIKE ? ORDER BY edats_number DESC LIMIT 1',
-          [like]
-        );
-        const lastSeq = seqRows[0]?.edats_number ? /(\d+)$/.exec(seqRows[0].edats_number)?.[1] : undefined;
-        const nextSeq = (lastSeq ? parseInt(lastSeq, 10) : 0) + 1;
-        const edatsNumberFinal = `EDTS-${year}-${month}-${String(nextSeq).padStart(4, '0')}`;
-
         await conn.query(
           `INSERT INTO edats_steps
-          (edats_number, tracking_number, step_number, sender, action_taken, action_required, receiver, section, due_in, date_forwarded, date_received, time_received, status)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          (tracking_number, step_number, sender, action_taken, action_required, receiver, section, due_in, date_forwarded, date_received, time_received, status)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
-            edatsNumberFinal,
             id,
             lastStepNumber + 1,
             currentHolder,
-            actionTaken,
+            actionTaken || null,
             JSON.stringify([]),
             null,
             section,
-            'simple',
+            dueInFromLast,
             getManilaDateYYYYMMDD(now),
             getManilaDateYYYYMMDD(now),
             getManilaTimeHHMMSS(now),
@@ -205,10 +191,6 @@ export async function PUT(
           ]
         );
       } else if (forwardTo) {
-        if (!actionTaken) {
-          return NextResponse.json({ error: 'Action taken is required.' }, { status: 400 });
-        }
-
         if (lastStepNumber) {
           await conn.query(
             'UPDATE edats_steps SET status = ?, date_received = ?, time_received = ? WHERE tracking_number = ? AND step_number = ?',
@@ -216,31 +198,19 @@ export async function PUT(
           );
         }
 
-        const year = now.getFullYear().toString();
-        const month = (now.getMonth() + 1).toString().padStart(2, '0');
-        const like = `EDTS-${year}-${month}-%`;
-        const [seqRows] = await conn.query<Array<RowDataPacket & { edats_number: string }>>(
-          'SELECT edats_number FROM edats_steps WHERE edats_number LIKE ? ORDER BY edats_number DESC LIMIT 1',
-          [like]
-        );
-        const lastSeq = seqRows[0]?.edats_number ? /(\d+)$/.exec(seqRows[0].edats_number)?.[1] : undefined;
-        const nextSeq = (lastSeq ? parseInt(lastSeq, 10) : 0) + 1;
-        const edatsNumberNext = `EDTS-${year}-${month}-${String(nextSeq).padStart(4, '0')}`;
-
         await conn.query(
           `INSERT INTO edats_steps 
-          (edats_number, tracking_number, step_number, sender, action_taken, action_required, receiver, section, due_in, date_forwarded, status) 
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          (tracking_number, step_number, sender, action_taken, action_required, receiver, section, due_in, date_forwarded, status) 
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
-            edatsNumberNext,
             id,
             lastStepNumber + 1,
             currentHolder,
-            actionTaken,
+            actionTaken || null,
             JSON.stringify(parseActionRequired(data.actionRequired)),
             forwardTo,
             section,
-            dueIn,
+            dueInFromLast,
             getManilaDateYYYYMMDD(now),
             'Pending'
           ]

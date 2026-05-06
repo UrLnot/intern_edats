@@ -7,16 +7,17 @@ type LogRow = RowDataPacket & {
   subject: string;
   document_type: string;
   status: string;
+  archived: number;
   created_at: Date;
 };
 
 type StepRow = RowDataPacket & {
-  edats_number: string;
   tracking_number: string;
   step_number: number;
   sender: string;
   action_taken: string | null;
   action_required: string | null;
+  remarks: string | null;
   receiver: string | null;
   section: string | null;
   due_in: string;
@@ -73,17 +74,6 @@ const getNextTrackingSequenceForDate = async (datePartYYYYMMDD: string): Promise
   return (lastSeq ? parseInt(lastSeq, 10) : 0) + 1;
 };
 
-const getNextEdatsSequenceForYearMonth = async (year: string, month: string): Promise<number> => {
-  const like = `EDTS-${year}-${month}-%`;
-  const [rows] = await pool.query<Array<RowDataPacket & { edats_number: string }>>(
-    'SELECT edats_number FROM edats_steps WHERE edats_number LIKE ? ORDER BY edats_number DESC LIMIT 1',
-    [like]
-  );
-  const last = rows[0]?.edats_number;
-  const lastSeq = last ? /(\d+)$/.exec(last)?.[1] : undefined;
-  return (lastSeq ? parseInt(lastSeq, 10) : 0) + 1;
-};
-
 const parseActionRequired = (value: unknown): string[] => {
   if (Array.isArray(value)) return value.map(v => String(v).trim()).filter(Boolean);
   if (typeof value !== 'string' || !value.trim()) return [];
@@ -100,21 +90,35 @@ export async function GET(request: Request) {
     if (url.searchParams.get('nextIds') === '1') {
       const dateForwarded = url.searchParams.get('dateForwarded');
       const datePart = getPhilippinesDatePartYYYYMMDD(dateForwarded);
-      const year = datePart.slice(0, 4);
-      const month = datePart.slice(4, 6);
-      
-      const [trackingSeq, edatsSeq] = await Promise.all([
-        getNextTrackingSequenceForDate(datePart),
-        getNextEdatsSequenceForYearMonth(year, month)
-      ]);
+      const trackingSeq = await getNextTrackingSequenceForDate(datePart);
 
       const trackingNumber = `PMD-${datePart}-${String(trackingSeq).padStart(4, '0')}`;
-      const edatsNumber = `EDTS-${year}-${month}-${String(edatsSeq).padStart(4, '0')}`;
-      return NextResponse.json({ trackingNumber, edatsNumber });
+      return NextResponse.json({ trackingNumber });
     }
 
-    // Fetch all logs
-    const [logRows] = await pool.query<LogRow[]>('SELECT * FROM edats_logs ORDER BY created_at DESC');
+    if (url.searchParams.get('counts') === '1') {
+      const [rows] = await pool.query<Array<RowDataPacket & { total: number; pending: number; completed: number }>>(
+        `SELECT
+          SUM(1) AS total,
+          SUM(CASE WHEN archived = 0 AND LOWER(status) = 'pending' THEN 1 ELSE 0 END) AS pending,
+          SUM(CASE WHEN LOWER(status) = 'completed' THEN 1 ELSE 0 END) AS completed
+        FROM edats_logs`
+      );
+      const first = rows[0] || { total: 0, pending: 0, completed: 0 };
+      return NextResponse.json({
+        total: Number(first.total || 0),
+        pending: Number(first.pending || 0),
+        completed: Number(first.completed || 0),
+      });
+    }
+
+    const wantArchived = url.searchParams.get('archived') === '1';
+
+    // Fetch logs (active by default)
+    const [logRows] = await pool.query<LogRow[]>(
+      'SELECT * FROM edats_logs WHERE archived = ? ORDER BY created_at DESC',
+      [wantArchived ? 1 : 0]
+    );
     if (logRows.length === 0) return NextResponse.json([]);
 
     const trackingNumbers = logRows.map(l => l.tracking_number);
@@ -139,14 +143,15 @@ export async function GET(request: Request) {
       subject: log.subject,
       documentType: log.document_type,
       status: log.status,
+      archived: Boolean(log.archived),
       createdAt: log.created_at,
       steps: (stepsByTracking.get(log.tracking_number) || []).map(step => ({
-        edatsNumber: step.edats_number,
         trackingNumber: step.tracking_number,
         stepNumber: step.step_number,
         sender: step.sender,
         actionTaken: step.action_taken,
         actionRequired: parseActionRequired(step.action_required),
+        remarks: step.remarks,
         receiver: step.receiver,
         section: step.section,
         dueIn: step.due_in,
@@ -175,6 +180,8 @@ export async function POST(request: Request) {
       const receiver = typeof data.receiver === 'string' ? data.receiver.trim() : '';
       const sectionRaw = typeof data.section === 'string' ? data.section.trim() : '';
       const section = sectionRaw ? sectionRaw : null;
+      const remarksRaw = typeof data.remarks === 'string' ? data.remarks.trim() : '';
+      const remarks = remarksRaw ? remarksRaw : null;
       const subject = typeof data.subject === 'string' ? data.subject.trim() : '';
       const documentType = typeof data.documentType === 'string' ? data.documentType.trim() : '';
       if (!sender || !receiver || !subject) {
@@ -182,19 +189,6 @@ export async function POST(request: Request) {
       }
       await conn.beginTransaction();
       const datePart = getPhilippinesDatePartYYYYMMDD(data.dateForwarded);
-      const year = datePart.slice(0, 4);
-      const month = datePart.slice(4, 6);
-      const getNextEdatsNumberForYearMonth = async (): Promise<string> => {
-        const like = `EDTS-${year}-${month}-%`;
-        const [rows] = await conn.query<Array<RowDataPacket & { edats_number: string }>>(
-          'SELECT edats_number FROM edats_steps WHERE edats_number LIKE ? ORDER BY edats_number DESC LIMIT 1',
-          [like]
-        );
-        const last = rows[0]?.edats_number;
-        const lastSeq = last ? /(\d+)$/.exec(last)?.[1] : undefined;
-        const nextSeq = (lastSeq ? parseInt(lastSeq, 10) : 0) + 1;
-        return `EDTS-${year}-${month}-${String(nextSeq).padStart(4, '0')}`;
-      };
 
       // 1. Determine Tracking Number
       let trackingNumber = data.trackingNumber?.trim();
@@ -209,13 +203,7 @@ export async function POST(request: Request) {
         [trackingNumber, subject, documentType, 'Pending']
       );
 
-      // 3. Determine EDATS Number for first step
-      let edatsNumber = data.edatsNumber?.trim();
-      if (!edatsNumber) {
-        edatsNumber = await getNextEdatsNumberForYearMonth();
-      }
-
-      // 4. Insert Steps
+      // 3. Insert Steps
       const dateForwarded = data.dateForwarded ? new Date(data.dateForwarded).toISOString().split('T')[0] : getManilaDateYYYYMMDD(new Date());
 
       const initialActionTaken =
@@ -225,15 +213,15 @@ export async function POST(request: Request) {
 
       await conn.query(
         `INSERT INTO edats_steps 
-        (edats_number, tracking_number, step_number, sender, action_taken, action_required, receiver, section, due_in, date_forwarded, status) 
+        (tracking_number, step_number, sender, action_taken, action_required, remarks, receiver, section, due_in, date_forwarded, status) 
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
-          edatsNumber,
           trackingNumber,
           1,
           sender,
           initialActionTaken,
           JSON.stringify(parseActionRequired(data.actionRequired)),
+          remarks,
           receiver,
           section,
           normalizeDueIn(data.dueIn),
@@ -243,7 +231,7 @@ export async function POST(request: Request) {
       );
 
       await conn.commit();
-      return NextResponse.json({ trackingNumber, edatsNumber, status: 'Pending' });
+      return NextResponse.json({ trackingNumber, status: 'Pending' });
     } catch (error) {
       await conn.rollback();
       throw error;

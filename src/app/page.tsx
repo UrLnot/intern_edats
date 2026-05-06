@@ -9,15 +9,21 @@ import FeedbackToast from '@/components/FeedbackToast';
 import SearchInput from '@/components/SearchInput';
 import ThemeToggle from '@/components/ThemeToggle';
 import { useThemeValue } from '@/components/ThemeProvider';
-import { Search, Plus, Filter, LayoutGrid, List, FileText, Calendar, Clock, ChevronRight, User, Trash2, Trees, LogOut, Check, X, AlertCircle, ChevronDown, CheckCircle2 } from 'lucide-react';
+import { Search, Plus, Filter, ChevronDown, LayoutGrid, List, FileText, Calendar, Clock, ChevronRight, User, Trash2, Trees, LogOut, Check, X, AlertCircle, CheckCircle2 } from 'lucide-react';
 
 function HomeInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [entries, setEntries] = useState<EDATLog[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState('all');
+  const [sectionFilter, setSectionFilter] = useState('');
+  const [viewArchived, setViewArchived] = useState(false);
   const [isLoaded, setIsLoaded] = useState(false);
+  const [summary, setSummary] = useState<{ total: number; pending: number; completed: number }>({
+    total: 0,
+    pending: 0,
+    completed: 0,
+  });
   const [deleteModal, setDeleteModal] = useState<{ isOpen: boolean; trackingNumber: string }>({
     isOpen: false,
     trackingNumber: '',
@@ -57,13 +63,23 @@ function HomeInner() {
   useEffect(() => {
     const fetchEntries = async () => {
       try {
-        const response = await fetch('/api/edats');
+        const listUrl = viewArchived ? '/api/edats?archived=1' : '/api/edats';
+        const response = await fetch(listUrl);
         if (response.ok) {
           const data = await response.json();
           setEntries(data);
         } else {
           const errorText = await response.text();
           console.error('Failed to fetch from API:', response.status, errorText);
+        }
+        const countsResponse = await fetch('/api/edats?counts=1');
+        if (countsResponse.ok) {
+          const counts = await countsResponse.json();
+          setSummary({
+            total: Number(counts?.total || 0),
+            pending: Number(counts?.pending || 0),
+            completed: Number(counts?.completed || 0),
+          });
         }
       } catch (e) {
         console.error('Failed to fetch records', e);
@@ -72,7 +88,7 @@ function HomeInner() {
       }
     };
     fetchEntries();
-  }, []);
+  }, [viewArchived]);
 
   useEffect(() => {
     const created = searchParams.get('created') === '1';
@@ -98,7 +114,7 @@ function HomeInner() {
       if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }, 150);
     return () => clearTimeout(t);
-  }, [highlightedId, entries.length, searchQuery, statusFilter]);
+  }, [highlightedId, entries.length, searchQuery, sectionFilter]);
 
   const filteredEntries = useMemo(() => {
     let result = entries;
@@ -112,7 +128,6 @@ function HomeInner() {
         
         return (
           log.trackingNumber.toLowerCase().includes(query) ||
-          (latestStep?.edatsNumber || '').toLowerCase().includes(query) ||
           (firstStep?.sender || '').toLowerCase().includes(query) ||
           log.subject.toLowerCase().includes(query) ||
           (latestStep?.receiver || '').toLowerCase().includes(query)
@@ -120,35 +135,38 @@ function HomeInner() {
       });
     }
 
-    // Status filter
-    if (statusFilter !== 'all') {
-      result = result.filter((log) => (log.status || 'Pending').toLowerCase() === statusFilter.toLowerCase());
+    if (sectionFilter) {
+      const normalized = sectionFilter.trim().toLowerCase();
+      result = result.filter((log) => {
+        for (let i = log.steps.length - 1; i >= 0; i--) {
+          const s = (log.steps[i]?.section || '').trim();
+          if (s) return s.toLowerCase() === normalized;
+        }
+        return false;
+      });
     }
 
     return result;
-  }, [entries, searchQuery, statusFilter]);
+  }, [entries, searchQuery, sectionFilter]);
 
-  const statusOptions = useMemo(() => {
-    const toTitleCase = (value: string) =>
-      value
-        .split(' ')
-        .filter(Boolean)
-        .map((word) => word[0]?.toUpperCase() + word.slice(1))
-        .join(' ');
-
-    const seen = new Set<string>();
-    const ordered: string[] = [];
-
-    for (const entry of entries) {
-      const status = (entry.status || 'Pending').toLowerCase();
-      if (!seen.has(status)) {
-        seen.add(status);
-        ordered.push(status);
+  const sectionOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const log of entries) {
+      for (let i = log.steps.length - 1; i >= 0; i--) {
+        const s = (log.steps[i]?.section || '').trim();
+        if (s) {
+          set.add(s);
+          break;
+        }
       }
     }
-
-    return ordered.map((value) => ({ value, label: toTitleCase(value) }));
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
   }, [entries]);
+
+  useEffect(() => {
+    if (!sectionFilter) return;
+    if (!sectionOptions.includes(sectionFilter)) setSectionFilter('');
+  }, [sectionFilter, sectionOptions]);
 
   const handleView = (log: EDATLog) => {
     router.push(`/edats/${encodeURIComponent(log.trackingNumber)}`);
@@ -197,13 +215,7 @@ function HomeInner() {
     }
   };
 
-  const stats = useMemo(() => {
-    const total = entries.length;
-    const pending = entries.filter(e => (e.status || 'Pending').toLowerCase() === 'pending').length;
-    const completed = entries.filter(e => (e.status || '').toLowerCase() === 'completed').length;
-
-    return { total, pending, completed };
-  }, [entries]);
+  const stats = summary;
 
   if (!isLoaded) return null;
 
@@ -300,31 +312,77 @@ function HomeInner() {
           </div>
 
           <div className="flex flex-col sm:flex-row gap-3">
-            <div className="relative w-full sm:w-48">
-              <div className="absolute inset-y-0 left-0 flex items-center pl-3 lg:pl-4 pointer-events-none text-emerald-500/70 dark:text-emerald-400/70">
-                <Filter size={16} />
-              </div>
-              <select
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value)}
-                className="w-full p-3 lg:p-4 pl-11 lg:pl-12 pr-12 lg:pr-14 text-sm lg:text-base rounded-xl lg:rounded-2xl border appearance-none cursor-pointer
-                  bg-white/80 dark:bg-emerald-900/30 backdrop-blur-md
-                  border-emerald-200/60 dark:border-emerald-800/60
-                  text-emerald-900 dark:text-emerald-50 font-semibold tracking-tight
-                  focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500/60 outline-none
-                  transition-all shadow-sm hover:shadow-md hover:bg-white dark:hover:bg-emerald-900/40"
+            <div
+              role="tablist"
+              aria-label="Registry views"
+              className="w-full sm:w-auto flex items-center p-1 rounded-2xl border border-emerald-200/60 dark:border-emerald-800/60 bg-white/70 dark:bg-emerald-900/30 backdrop-blur-md shadow-sm"
+            >
+              <button
+                type="button"
+                role="tab"
+                aria-selected={!viewArchived}
+                onClick={() => setViewArchived(false)}
+                className={`flex-1 sm:flex-none px-4 py-2 rounded-xl text-sm font-black uppercase tracking-wider transition-all ${
+                  !viewArchived
+                    ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-900/20'
+                    : 'text-emerald-800 dark:text-emerald-100 hover:bg-emerald-50 dark:hover:bg-emerald-900/40'
+                }`}
               >
-                <option value="all" className="bg-white dark:bg-emerald-950">All Status</option>
-                {statusOptions.map((option) => (
-                  <option key={option.value} value={option.value} className="bg-white dark:bg-emerald-950">
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-              <div className="absolute inset-y-0 right-0 flex items-center pr-3 lg:pr-4 pointer-events-none text-emerald-500/70 dark:text-emerald-400/70">
-                <ChevronDown size={16} />
-              </div>
+                Active
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={viewArchived}
+                onClick={() => setViewArchived(true)}
+                className={`flex-1 sm:flex-none px-4 py-2 rounded-xl text-sm font-black uppercase tracking-wider transition-all ${
+                  viewArchived
+                    ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-900/20'
+                    : 'text-emerald-800 dark:text-emerald-100 hover:bg-emerald-50 dark:hover:bg-emerald-900/40'
+                }`}
+              >
+                Archive
+              </button>
             </div>
+            {sectionOptions.length > 0 ? (
+              <div className="relative w-full sm:w-64">
+                <div className="absolute inset-y-0 left-0 flex items-center pl-3 lg:pl-4 pointer-events-none text-emerald-500/70 dark:text-emerald-400/70">
+                  <Filter size={16} />
+                </div>
+                <select
+                  value={sectionFilter}
+                  onChange={(e) => setSectionFilter(e.target.value)}
+                  className="w-full p-3 lg:p-4 pl-11 lg:pl-12 pr-12 lg:pr-14 text-sm lg:text-base rounded-xl lg:rounded-2xl border appearance-none cursor-pointer
+                    bg-white/80 dark:bg-emerald-900/30 backdrop-blur-md
+                    border-emerald-200/60 dark:border-emerald-800/60
+                    text-emerald-900 dark:text-emerald-50 font-semibold tracking-tight
+                    focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500/60 outline-none
+                    transition-all shadow-sm hover:shadow-md hover:bg-white dark:hover:bg-emerald-900/40"
+                >
+                  <option value="" className="bg-white dark:bg-emerald-950">Section</option>
+                  {sectionOptions.map((opt) => (
+                    <option key={opt} value={opt} className="bg-white dark:bg-emerald-950">
+                      {opt}
+                    </option>
+                  ))}
+                </select>
+                <div className="absolute inset-y-0 right-0 flex items-center gap-1 pr-3 lg:pr-4">
+                  {sectionFilter ? (
+                    <button
+                      type="button"
+                      onClick={() => setSectionFilter('')}
+                      className="p-1 rounded-lg text-emerald-700/70 hover:text-emerald-900 hover:bg-emerald-50 dark:text-emerald-300/70 dark:hover:text-emerald-50 dark:hover:bg-emerald-900/40 transition-colors"
+                      title="Clear section filter"
+                    >
+                      <X size={14} />
+                    </button>
+                  ) : null}
+                  <div className="pointer-events-none text-emerald-500/70 dark:text-emerald-400/70">
+                    <ChevronDown size={16} />
+                  </div>
+                </div>
+              </div>
+            ) : null}
           </div>
 
           <button
@@ -338,7 +396,7 @@ function HomeInner() {
 
         <section className="bg-white/50 dark:bg-emerald-900/10 backdrop-blur-xl rounded-2xl shadow-xl border border-emerald-200/50 dark:border-emerald-800/50 overflow-hidden transition-all">
           <div className="px-6 py-4 bg-emerald-50/50 dark:bg-emerald-900/30 border-b border-emerald-200/50 dark:border-emerald-800/50 flex items-center justify-between">
-             <h2 className="text-sm font-black text-emerald-600 dark:text-emerald-400 uppercase tracking-[0.2em]">Document Registry</h2>
+             <h2 className="text-sm font-black text-emerald-600 dark:text-emerald-400 uppercase tracking-[0.2em]">{viewArchived ? 'Archive' : 'Document Registry'}</h2>
              <span className="text-xs font-bold text-emerald-700/60 dark:text-emerald-400/60 bg-emerald-100/50 dark:bg-emerald-800/50 px-3 py-1 rounded-full border border-emerald-200/50 dark:border-emerald-700/50">
                {filteredEntries.length} Records Found
              </span>
