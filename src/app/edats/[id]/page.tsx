@@ -257,6 +257,7 @@ export default function EntryDetailsPage() {
   const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
   const [selectedAttachmentId, setSelectedAttachmentId] = useState<number | null>(null);
   const [attachmentsLoading, setAttachmentsLoading] = useState(false);
+  const [employees, setEmployees] = useState<Array<{ id: number; name: string; position: string; section: string }>>([]);
 
   // Forwarding state
   const [forwardData, setForwardData] = useState({
@@ -270,6 +271,107 @@ export default function EntryDetailsPage() {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadEmployees = async () => {
+      try {
+        const response = await fetch('/api/employees');
+        if (!response.ok) return;
+        const data = (await response.json()) as unknown;
+        const list = Array.isArray(data)
+          ? data
+              .filter((v): v is Record<string, unknown> => typeof v === 'object' && v !== null)
+              .map((v) => ({
+                id: typeof v.id === 'number' ? v.id : -1,
+                name: typeof v.name === 'string' ? v.name : '',
+                position: typeof v.position === 'string' ? v.position : '',
+                section: typeof v.section === 'string' ? v.section : '',
+              }))
+              .filter((v) => v.id >= 0 && v.name)
+          : [];
+        if (!cancelled) setEmployees(list);
+      } catch {}
+    };
+    loadEmployees();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const employeesByName = useMemo(() => {
+    const map = new Map<string, { position: string; section: string }>();
+    for (const e of employees) map.set(e.name, { position: e.position, section: e.section });
+    return map;
+  }, [employees]);
+
+  const canonicalizeSection = (value: string) => {
+    const raw = (value || '').trim();
+    const v = raw.toLowerCase();
+    if (!v) return '';
+    if (v.includes('monitor') || v.includes('eval')) return 'Monitoring and Evaluation';
+    if (v.includes('ict')) return 'ICT';
+    if (v.includes('stat')) return 'Statistics';
+    if (v.includes('plan') || v.includes('program')) return 'Plans and Programs';
+    return raw;
+  };
+
+  const romanToInt = (roman: string) => {
+    const map: Record<string, number> = { I: 1, V: 5, X: 10 };
+    const s = roman.toUpperCase().trim();
+    let total = 0;
+    let prev = 0;
+    for (let i = s.length - 1; i >= 0; i--) {
+      const val = map[s[i]] ?? 0;
+      if (val < prev) total -= val;
+      else total += val;
+      prev = val;
+    }
+    return total;
+  };
+
+  const positionSortKey = (position: string) => {
+    const raw = (position || '').trim();
+    const p = raw.toLowerCase();
+    const isSectionChief = p.includes('section chief');
+    const isUnitHead = p.includes('unit head');
+
+    let category = 5;
+    if (isSectionChief) category = 0;
+    else if (isUnitHead) category = 1;
+    else if (p.includes('officer') || p.includes('analyst') || p.includes('statistician')) category = 2;
+    else if (p.includes('assistant')) category = 3;
+    else if (p.includes('operator')) category = 4;
+
+    const romanMatch = raw.match(/\b([IVX]{1,6})\b(?!.*\b[IVX]{1,6}\b)/i);
+    const level = romanMatch ? romanToInt(romanMatch[1]) : 0;
+    const role = raw.replace(/\b[IVX]{1,6}\b/gi, '').replace(/\s+/g, ' ').trim().toLowerCase();
+
+    return { category, role, level };
+  };
+
+  const filteredReceivers = useMemo(() => {
+    const section = canonicalizeSection(forwardData.section || '');
+    const list = section
+      ? employees.filter((e) => canonicalizeSection(e.section || '') === section)
+      : employees;
+
+    return [...list].sort((a, b) => {
+      const ak = positionSortKey(a.position);
+      const bk = positionSortKey(b.position);
+      if (ak.category !== bk.category) return ak.category - bk.category;
+      if (ak.role !== bk.role) return ak.role.localeCompare(bk.role);
+      if (ak.level !== bk.level) return bk.level - ak.level;
+      return a.name.localeCompare(b.name);
+    });
+  }, [employees, forwardData.section]);
+
+  useEffect(() => {
+    if (!forwardData.receiver) return;
+    if (filteredReceivers.length === 0) return;
+    if (filteredReceivers.some((e) => e.name === forwardData.receiver)) return;
+    setForwardData((prev) => (prev.receiver ? { ...prev, receiver: '' } : prev));
+  }, [filteredReceivers, forwardData.receiver]);
 
   useEffect(() => {
     const load = async () => {
@@ -560,7 +662,23 @@ export default function EntryDetailsPage() {
                   <textarea disabled={!isEditing('subject')} value={log.subject} onChange={(e) => setLogField('subject', e.target.value)} rows={2} className={inputClass(isEditing('subject'))} />
                 </FieldRow>
                 <FieldRow label="Type of Document" editing={isEditing('documentType')} onToggle={() => toggleEdit('documentType')} onCancel={() => cancelEdit('documentType')} onSave={saveLogDetails} saving={saving}>
-                  <input disabled={!isEditing('documentType')} value={log.documentType} onChange={(e) => setLogField('documentType', e.target.value)} className={inputClass(isEditing('documentType'))} />
+                  <select
+                    disabled={!isEditing('documentType')}
+                    value={log.documentType}
+                    onChange={(e) => setLogField('documentType', e.target.value)}
+                    className={inputClass(isEditing('documentType'))}
+                  >
+                    <option value="" disabled hidden>
+                      Select type
+                    </option>
+                    <option value="Memorandum">Memorandum</option>
+                    <option value="Endorsement">Endorsement</option>
+                    <option value="Letter">Letter</option>
+                    <option value="Email">Email</option>
+                    <option value="Special Order">Special Order</option>
+                    <option value="Notice of Meeting">Notice of Meeting</option>
+                    <option value="Advisory">Advisory</option>
+                  </select>
                 </FieldRow>
                 <div className="p-3 sm:p-4 rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50/40 dark:bg-emerald-950/20">
                   <div className="text-sm sm:text-base font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400 mb-2">Due</div>
@@ -625,6 +743,11 @@ export default function EntryDetailsPage() {
                                   <div>
                                     <div className="text-xs font-bold text-emerald-700/60 dark:text-emerald-400/60 uppercase mb-1">Receiver</div>
                                     <div className="text-base font-semibold text-emerald-900 dark:text-emerald-50">{step.receiver}</div>
+                                    {employeesByName.get(step.receiver)?.position ? (
+                                      <div className="text-xs text-emerald-700/70 dark:text-emerald-300/70">
+                                        {employeesByName.get(step.receiver)!.position}
+                                      </div>
+                                    ) : null}
                                   </div>
                                 ) : null}
 
@@ -701,7 +824,11 @@ export default function EntryDetailsPage() {
                         disabled={Boolean(lockedSection)}
                         className="w-full p-2.5 text-sm border border-emerald-200 dark:border-emerald-800 rounded-lg bg-white dark:bg-emerald-950/30 outline-none focus:border-emerald-500"
                       >
-                        {!lockedSection && <option value="">Select Section</option>}
+                        {!lockedSection && (
+                          <option value="" disabled hidden>
+                            Select Section
+                          </option>
+                        )}
                         {(() => {
                           const base = ['Plans and Programs', 'Monitoring and Evaluation', 'ICT', 'Statistics'];
                           const locked = (lockedSection || '').trim();
@@ -718,12 +845,32 @@ export default function EntryDetailsPage() {
                       <label className="text-xs font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-wider">
                         Next Receiver
                       </label>
-                      <input 
+                      <select
                         value={forwardData.receiver}
                         onChange={e => setForwardData(prev => ({ ...prev, receiver: e.target.value }))}
-                        placeholder="Who is receiving this or finalizing it?"
+                        disabled={filteredReceivers.length === 0}
                         className="w-full p-2.5 text-sm border border-emerald-200 dark:border-emerald-800 rounded-lg bg-white dark:bg-emerald-950/30 outline-none focus:border-emerald-500"
-                      />
+                      >
+                        {filteredReceivers.length === 0 ? (
+                          <option value="" disabled>
+                            No receivers found
+                          </option>
+                        ) : (
+                          <option value="" disabled hidden>
+                            Select receiver
+                          </option>
+                        )}
+                        {filteredReceivers.map((e) => (
+                          <option key={e.id} value={e.name}>
+                            {e.name} — {e.position}
+                          </option>
+                        ))}
+                      </select>
+                      {employeesByName.get(forwardData.receiver)?.position ? (
+                        <div className="text-[11px] text-emerald-700/70 dark:text-emerald-300/70 mt-1">
+                          {employeesByName.get(forwardData.receiver)!.position}
+                        </div>
+                      ) : null}
                     </div>
                     <div className="md:col-span-2 space-y-2">
                       <label className="text-xs font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-wider">Actions Required (From next receiver)</label>

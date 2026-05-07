@@ -13,6 +13,38 @@ interface EDATCardsProps {
 }
 
 export default function EDATCards({ entries, onDelete, onView, highlightedId }: EDATCardsProps) {
+  const [employeesByName, setEmployeesByName] = React.useState<Map<string, { position: string; section: string }>>(
+    () => new Map()
+  );
+
+  React.useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const response = await fetch('/api/employees');
+        if (!response.ok) return;
+        const data = (await response.json()) as unknown;
+        const list = Array.isArray(data)
+          ? data
+              .filter((v): v is Record<string, unknown> => typeof v === 'object' && v !== null)
+              .map((v) => ({
+                name: typeof v.name === 'string' ? v.name : '',
+                position: typeof v.position === 'string' ? v.position : '',
+                section: typeof v.section === 'string' ? v.section : '',
+              }))
+              .filter((v) => v.name)
+          : [];
+        const map = new Map<string, { position: string; section: string }>();
+        for (const e of list) map.set(e.name, { position: e.position, section: e.section });
+        if (!cancelled) setEmployeesByName(map);
+      } catch {}
+    };
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const formatDueIn = (dueIn: EDATStep['dueIn'] | null | undefined) => {
     if (dueIn === 'technical') return 'Technical (7 days)';
     if (dueIn === 'highlyTechnical') return 'Highly Technical (20 days)';
@@ -185,6 +217,7 @@ export default function EDATCards({ entries, onDelete, onView, highlightedId }: 
               ? (latestStep?.sender || '-')
               : '-');
         const currentSection = (latestPendingStep?.section || '').trim();
+        const currentHolderPosition = employeesByName.get(currentHolder)?.position || '';
 
         return (
           <div
@@ -283,6 +316,11 @@ export default function EDATCards({ entries, onDelete, onView, highlightedId }: 
               <div className="text-sm font-bold text-emerald-900 dark:text-emerald-50 truncate pl-3.5">
                 {currentHolder}
               </div>
+              {currentHolderPosition ? (
+                <div className="text-[11px] text-emerald-700/70 dark:text-emerald-300/70 truncate pl-3.5">
+                  {currentHolderPosition}
+                </div>
+              ) : null}
               {currentSection ? (
                 <div className="mt-1 pl-3.5 border-l-2 border-emerald-200 dark:border-emerald-800">
                   <span className="text-[9px] font-black uppercase tracking-tight text-emerald-500/70 block mb-0.5">Section</span>

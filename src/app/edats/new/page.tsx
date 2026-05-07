@@ -1,6 +1,6 @@
 'use client';
 
-import React, { Suspense, useEffect, useState } from 'react';
+import React, { Suspense, useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { ACTION_REQUIRED_OPTIONS, EDATLog } from '@/types/edat';
 import ThemeToggle from '@/components/ThemeToggle';
@@ -28,7 +28,7 @@ const getCurrentManilaDateTime = () => {
 const EMPTY_LOG_DATA = {
   subject: '',
   documentType: '',
-  dateForwarded: getCurrentManilaDateTime().date,
+  dateForwarded: '',
   sender: '',
   receiver: '',
   actionRequired: [] as string[],
@@ -38,6 +38,7 @@ const EMPTY_LOG_DATA = {
 
 function NewEntryPageContent() {
   const router = useRouter();
+  const [mounted, setMounted] = useState(false);
   const [currentTime, setCurrentTime] = useState(new Date());
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{ show: boolean; message: string; type: 'success' | 'error' }>({
@@ -48,11 +49,119 @@ function NewEntryPageContent() {
   const [formData, setFormData] = useState({ ...EMPTY_LOG_DATA });
   const [generatedIds, setGeneratedIds] = useState<{ trackingNumber: string } | null>(null);
   const [attachments, setAttachments] = useState<File[]>([]);
+  const [employees, setEmployees] = useState<Array<{ id: number; name: string; position: string; section: string }>>([]);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    if (!mounted) return;
+    if (formData.dateForwarded) return;
+    setFormData((prev) => ({ ...prev, dateForwarded: getCurrentManilaDateTime().date }));
+  }, [mounted, formData.dateForwarded]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadEmployees = async () => {
+      try {
+        const response = await fetch('/api/employees');
+        if (!response.ok) return;
+        const data = (await response.json()) as unknown;
+        const list = Array.isArray(data)
+          ? data
+              .filter((v): v is Record<string, unknown> => typeof v === 'object' && v !== null)
+              .map((v) => ({
+                id: typeof v.id === 'number' ? v.id : -1,
+                name: typeof v.name === 'string' ? v.name : '',
+                position: typeof v.position === 'string' ? v.position : '',
+                section: typeof v.section === 'string' ? v.section : '',
+              }))
+              .filter((v) => v.id >= 0 && v.name)
+          : [];
+        if (!cancelled) setEmployees(list);
+      } catch {}
+    };
+    loadEmployees();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const selectedReceiverInfo = employees.find((e) => e.name === formData.receiver) || null;
+
+  const canonicalizeSection = (value: string) => {
+    const raw = (value || '').trim();
+    const v = raw.toLowerCase();
+    if (!v) return '';
+    if (v.includes('monitor') || v.includes('eval')) return 'Monitoring and Evaluation';
+    if (v.includes('ict')) return 'ICT';
+    if (v.includes('stat')) return 'Statistics';
+    if (v.includes('plan') || v.includes('program')) return 'Plans and Programs';
+    return raw;
+  };
+
+  const romanToInt = (roman: string) => {
+    const map: Record<string, number> = { I: 1, V: 5, X: 10 };
+    const s = roman.toUpperCase().trim();
+    let total = 0;
+    let prev = 0;
+    for (let i = s.length - 1; i >= 0; i--) {
+      const val = map[s[i]] ?? 0;
+      if (val < prev) total -= val;
+      else total += val;
+      prev = val;
+    }
+    return total;
+  };
+
+  const positionSortKey = (position: string) => {
+    const raw = (position || '').trim();
+    const p = raw.toLowerCase();
+    const isSectionChief = p.includes('section chief');
+    const isUnitHead = p.includes('unit head');
+
+    let category = 5;
+    if (isSectionChief) category = 0;
+    else if (isUnitHead) category = 1;
+    else if (p.includes('officer') || p.includes('analyst') || p.includes('statistician')) category = 2;
+    else if (p.includes('assistant')) category = 3;
+    else if (p.includes('operator')) category = 4;
+
+    const romanMatch = raw.match(/\b([IVX]{1,6})\b(?!.*\b[IVX]{1,6}\b)/i);
+    const level = romanMatch ? romanToInt(romanMatch[1]) : 0;
+    const role = raw.replace(/\b[IVX]{1,6}\b/gi, '').replace(/\s+/g, ' ').trim().toLowerCase();
+
+    return { category, role, level };
+  };
+
+  const groupedEmployees = useMemo(() => {
+    const bySection = new Map<string, Array<{ id: number; name: string; position: string; section: string }>>();
+    for (const e of employees) {
+      const section = canonicalizeSection(e.section || '') || 'Other';
+      const list = bySection.get(section) || [];
+      list.push(e);
+      bySection.set(section, list);
+    }
+
+    const sortedSections = Array.from(bySection.keys()).sort((a, b) => a.localeCompare(b));
+    return sortedSections.map((section) => {
+      const people = [...(bySection.get(section) || [])].sort((a, b) => {
+      const ak = positionSortKey(a.position);
+      const bk = positionSortKey(b.position);
+      if (ak.category !== bk.category) return ak.category - bk.category;
+      if (ak.role !== bk.role) return ak.role.localeCompare(bk.role);
+      if (ak.level !== bk.level) return bk.level - ak.level;
+      return a.name.localeCompare(b.name);
+    });
+      return { section, people };
+    });
+  }, [employees]);
 
   useEffect(() => {
     let cancelled = false;
@@ -77,17 +186,21 @@ function NewEntryPageContent() {
     };
   }, [formData.dateForwarded]);
 
-  const formattedDate = currentTime.toLocaleDateString('en-US', {
-    weekday: 'short',
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  });
-  const formattedTime = currentTime.toLocaleTimeString('en-US', {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  });
+  const formattedDate = mounted
+    ? currentTime.toLocaleDateString('en-US', {
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+      })
+    : '—';
+  const formattedTime = mounted
+    ? currentTime.toLocaleTimeString('en-US', {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+      })
+    : '—';
 
   const handleLogout = async () => {
     try {
@@ -242,7 +355,23 @@ function NewEntryPageContent() {
               </div>
               <div className="lg:col-span-2">
                 <label className="block text-sm font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400 mb-1">Type of Document</label>
-                <input name="documentType" value={formData.documentType} onChange={handleChange} className="w-full p-2.5 text-base border rounded-lg bg-white dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800 text-emerald-900 dark:text-emerald-50" />
+                <select
+                  name="documentType"
+                  value={formData.documentType}
+                  onChange={handleChange}
+                  className="w-full p-2.5 text-base border rounded-lg bg-white dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800 text-emerald-900 dark:text-emerald-50"
+                >
+                  <option value="" disabled hidden>
+                    Select type
+                  </option>
+                  <option value="Memorandum">Memorandum</option>
+                  <option value="Endorsement">Endorsement</option>
+                  <option value="Letter">Letter</option>
+                  <option value="Email">Email</option>
+                  <option value="Special Order">Special Order</option>
+                  <option value="Notice of Meeting">Notice of Meeting</option>
+                  <option value="Advisory">Advisory</option>
+                </select>
               </div>
               <div>
                 <label className="block text-sm font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400 mb-1">Date Forwarded</label>
@@ -297,7 +426,42 @@ function NewEntryPageContent() {
             <div className="grid grid-cols-1 gap-4">
               <div>
                 <label className="block text-sm font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400 mb-1">1st Receiver</label>
-                <input name="receiver" value={formData.receiver} onChange={handleChange} required placeholder="Who are you sending this to?" className="w-full p-2.5 text-base border rounded-lg bg-white dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800 text-emerald-900 dark:text-emerald-50" />
+                <select
+                  name="receiver"
+                  value={formData.receiver}
+                  onChange={handleChange}
+                  required
+                  disabled={employees.length === 0}
+                  className="w-full p-2.5 text-base border rounded-lg bg-white dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800 text-emerald-900 dark:text-emerald-50"
+                >
+                  {employees.length === 0 ? (
+                    <option value="" disabled className="bg-white text-emerald-900 dark:bg-emerald-950 dark:text-emerald-50">
+                      No receivers found
+                    </option>
+                  ) : (
+                    <option value="" disabled hidden className="bg-white text-emerald-900 dark:bg-emerald-950 dark:text-emerald-50">
+                      Select receiver
+                    </option>
+                  )}
+                  {groupedEmployees.map((group) => (
+                    <optgroup
+                      key={group.section}
+                      label={group.section}
+                      className="bg-emerald-50 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-50"
+                    >
+                      {group.people.map((e) => (
+                        <option key={e.id} value={e.name} className="bg-white text-emerald-900 dark:bg-emerald-950 dark:text-emerald-50">
+                          {e.name} — {e.position}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </select>
+                {selectedReceiverInfo ? (
+                  <div className="mt-1 text-xs text-emerald-700/70 dark:text-emerald-300/70">
+                    {selectedReceiverInfo.position} • {selectedReceiverInfo.section}
+                  </div>
+                ) : null}
               </div>
             </div>
 

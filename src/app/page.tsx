@@ -116,6 +116,17 @@ function HomeInner() {
     return () => clearTimeout(t);
   }, [highlightedId, entries.length, searchQuery, sectionFilter]);
 
+  const canonicalizeSection = (value: string) => {
+    const raw = (value || '').trim();
+    const v = raw.toLowerCase();
+    if (!v) return '';
+    if (v.includes('monitor') || v.includes('eval')) return 'Monitoring and Evaluation';
+    if (v.includes('ict')) return 'ICT';
+    if (v.includes('stat')) return 'Statistics';
+    if (v.includes('plan') || v.includes('program')) return 'Plans and Programs';
+    return raw;
+  };
+
   const filteredEntries = useMemo(() => {
     let result = entries;
 
@@ -136,10 +147,10 @@ function HomeInner() {
     }
 
     if (sectionFilter) {
-      const normalized = sectionFilter.trim().toLowerCase();
+      const normalized = canonicalizeSection(sectionFilter).toLowerCase();
       result = result.filter((log) => {
         for (let i = log.steps.length - 1; i >= 0; i--) {
-          const s = (log.steps[i]?.section || '').trim();
+          const s = canonicalizeSection(log.steps[i]?.section || '');
           if (s) return s.toLowerCase() === normalized;
         }
         return false;
@@ -153,7 +164,7 @@ function HomeInner() {
     const set = new Set<string>();
     for (const log of entries) {
       for (let i = log.steps.length - 1; i >= 0; i--) {
-        const s = (log.steps[i]?.section || '').trim();
+        const s = canonicalizeSection(log.steps[i]?.section || '');
         if (s) {
           set.add(s);
           break;
@@ -359,7 +370,9 @@ function HomeInner() {
                     focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500/60 outline-none
                     transition-all shadow-sm hover:shadow-md hover:bg-white dark:hover:bg-emerald-900/40"
                 >
-                  <option value="" className="bg-white dark:bg-emerald-950">Section</option>
+                  <option value="" disabled hidden className="bg-white dark:bg-emerald-950">
+                    Section
+                  </option>
                   {sectionOptions.map((opt) => (
                     <option key={opt} value={opt} className="bg-white dark:bg-emerald-950">
                       {opt}
