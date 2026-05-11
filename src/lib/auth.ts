@@ -4,6 +4,8 @@ const DEFAULT_USERNAME = 'pmd_admin';
 const DEFAULT_PASSWORD = 'pmd_admin';
 const DEFAULT_SESSION_TOKEN = 'edats-internal-session';
 
+let memoSessionToken: string | null = null;
+
 export function getAuthConfig() {
   return {
     username: process.env.EDATS_USERNAME || DEFAULT_USERNAME,
@@ -18,5 +20,22 @@ export function isValidLogin(username: string, password: string) {
 }
 
 export function getSessionToken() {
-  return getAuthConfig().sessionToken;
+  if (memoSessionToken) return memoSessionToken;
+  const configured = (process.env.EDATS_SESSION_TOKEN || '').trim();
+  if (configured) {
+    memoSessionToken = configured;
+    return memoSessionToken;
+  }
+  if (process.env.NODE_ENV === 'production') {
+    const token = globalThis.crypto?.randomUUID?.();
+    if (token) {
+      memoSessionToken = token;
+      return memoSessionToken;
+    }
+    const fallback = `${Date.now()}-${Math.random().toString(16).slice(2)}-${Math.random().toString(16).slice(2)}`;
+    memoSessionToken = fallback;
+    return memoSessionToken;
+  }
+  memoSessionToken = DEFAULT_SESSION_TOKEN;
+  return memoSessionToken;
 }

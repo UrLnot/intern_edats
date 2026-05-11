@@ -116,23 +116,53 @@ export async function PUT(
   try {
     const { id } = await params;
     const data = await request.json();
+    const MAX_TRACKING = 64;
+    const MAX_NAME = 120;
+    const MAX_SECTION = 64;
+    const MAX_SUBJECT = 500;
+    const MAX_TYPE = 80;
+    const MAX_ACTION_TAKEN = 2000;
+
+    if (id.length > MAX_TRACKING) {
+      return NextResponse.json({ error: 'Invalid tracking number.' }, { status: 400 });
+    }
+
     const forwardTo = typeof data.forwardTo === 'string' ? data.forwardTo.trim() : '';
     const sectionRaw = typeof data.section === 'string' ? data.section.trim() : '';
     const actionTaken = typeof data.actionTaken === 'string' ? data.actionTaken.trim() : '';
+    const subject = typeof data.subject === 'string' ? data.subject.trim() : '';
+    const documentType = typeof data.documentType === 'string' ? data.documentType.trim() : '';
+
     if (typeof data.forwardTo === 'string' && !forwardTo) {
       return NextResponse.json({ error: 'Receiver is required.' }, { status: 400 });
     }
+    if (forwardTo && forwardTo.length > MAX_NAME) {
+      return NextResponse.json({ error: 'Receiver is too long.' }, { status: 400 });
+    }
+    if (sectionRaw && sectionRaw.length > MAX_SECTION) {
+      return NextResponse.json({ error: 'Section is too long.' }, { status: 400 });
+    }
+    if (actionTaken && actionTaken.length > MAX_ACTION_TAKEN) {
+      return NextResponse.json({ error: 'Action taken is too long.' }, { status: 400 });
+    }
+    if (typeof data.subject === 'string' && subject.length > MAX_SUBJECT) {
+      return NextResponse.json({ error: 'Subject is too long.' }, { status: 400 });
+    }
+    if (typeof data.documentType === 'string' && documentType.length > MAX_TYPE) {
+      return NextResponse.json({ error: 'Document type is too long.' }, { status: 400 });
+    }
+
     const conn = await pool.getConnection();
 
     try {
       await conn.beginTransaction();
 
       // 1. Update Log details if provided
-      if (data.subject || data.documentType || data.finalizeLog) {
+      if (typeof data.subject === 'string' || typeof data.documentType === 'string' || data.finalizeLog) {
         const updates: string[] = [];
         const values: any[] = [];
-        if (data.subject) { updates.push('subject = ?'); values.push(data.subject); }
-        if (data.documentType) { updates.push('document_type = ?'); values.push(data.documentType); }
+        if (typeof data.subject === 'string') { updates.push('subject = ?'); values.push(subject); }
+        if (typeof data.documentType === 'string') { updates.push('document_type = ?'); values.push(documentType); }
         if (data.finalizeLog) { updates.push('status = ?'); values.push('Completed'); updates.push('archived = ?'); values.push(1); }
         values.push(id);
         await conn.query(`UPDATE edats_logs SET ${updates.join(', ')} WHERE tracking_number = ?`, values);

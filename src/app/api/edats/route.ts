@@ -370,6 +370,14 @@ export async function POST(request: Request) {
     const conn = await pool.getConnection();
 
     try {
+      const MAX_TRACKING = 64;
+      const MAX_NAME = 120;
+      const MAX_SECTION = 64;
+      const MAX_SUBJECT = 500;
+      const MAX_TYPE = 80;
+      const MAX_ACTION_TAKEN = 2000;
+      const MAX_REMARKS = 2000;
+
       const sender = typeof data.sender === 'string' ? data.sender.trim() : '';
       const receiver = typeof data.receiver === 'string' ? data.receiver.trim() : '';
       const sectionRaw = typeof data.section === 'string' ? data.section.trim() : '';
@@ -381,15 +389,32 @@ export async function POST(request: Request) {
       if (!sender || !receiver || !subject) {
         return NextResponse.json({ error: 'Missing required fields.' }, { status: 400 });
       }
-      await conn.beginTransaction();
+      if (sender.length > MAX_NAME) return NextResponse.json({ error: 'Sender is too long.' }, { status: 400 });
+      if (receiver.length > MAX_NAME) return NextResponse.json({ error: 'Receiver is too long.' }, { status: 400 });
+      if (sectionRaw && sectionRaw.length > MAX_SECTION) return NextResponse.json({ error: 'Section is too long.' }, { status: 400 });
+      if (subject.length > MAX_SUBJECT) return NextResponse.json({ error: 'Subject is too long.' }, { status: 400 });
+      if (documentType && documentType.length > MAX_TYPE) return NextResponse.json({ error: 'Document type is too long.' }, { status: 400 });
+      if (remarksRaw && remarksRaw.length > MAX_REMARKS) return NextResponse.json({ error: 'Remarks is too long.' }, { status: 400 });
+
       const datePart = getPhilippinesDatePartYYYYMMDD(data.dateForwarded);
 
       // 1. Determine Tracking Number
-      let trackingNumber = data.trackingNumber?.trim();
+      let trackingNumber = typeof data.trackingNumber === 'string' ? data.trackingNumber.trim() : '';
       if (!trackingNumber) {
         const seq = await getNextTrackingSequenceForDate(datePart);
         trackingNumber = `PMD-${datePart}-${String(seq).padStart(4, '0')}`;
       }
+      if (trackingNumber.length > MAX_TRACKING) return NextResponse.json({ error: 'Tracking number is too long.' }, { status: 400 });
+
+      const initialActionTaken =
+        typeof data.actionTaken === 'string' && data.actionTaken.trim()
+          ? data.actionTaken.trim()
+          : 'Originated';
+      if (initialActionTaken.length > MAX_ACTION_TAKEN) {
+        return NextResponse.json({ error: 'Action taken is too long.' }, { status: 400 });
+      }
+
+      await conn.beginTransaction();
 
       // 2. Insert Log
       await conn.query(
@@ -397,13 +422,9 @@ export async function POST(request: Request) {
         [trackingNumber, subject, documentType, 'Pending']
       );
 
+
       // 3. Insert Steps
       const dateForwarded = data.dateForwarded ? new Date(data.dateForwarded).toISOString().split('T')[0] : getManilaDateYYYYMMDD(new Date());
-
-      const initialActionTaken =
-        typeof data.actionTaken === 'string' && data.actionTaken.trim()
-          ? data.actionTaken.trim()
-          : 'Originated';
 
       await conn.query(
         `INSERT INTO edats_steps 

@@ -245,13 +245,6 @@ export default function EDATCards({ entries, onDelete, onView, highlightedId }: 
     return formatDuration(endMs - startMs);
   };
 
-  const formatTimeReceived = (timeStr: string | null | undefined) => {
-    if (!timeStr) return '-';
-    const cleaned = timeStr.split('.')[0] ?? '';
-    if (/^00:00(?::00)?$/.test(cleaned)) return '-';
-    return cleaned;
-  };
-
   if (entries.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-20 text-emerald-400 dark:text-emerald-500/50 italic">

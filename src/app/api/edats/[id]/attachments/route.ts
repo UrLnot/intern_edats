@@ -122,6 +122,22 @@ export async function POST(
     if (files.length === 0) {
       return NextResponse.json({ error: 'No files uploaded' }, { status: 400 });
     }
+    if (files.length > 10) {
+      return NextResponse.json({ error: 'Too many files.' }, { status: 400 });
+    }
+
+    const MAX_FILE_BYTES = 10 * 1024 * 1024;
+    const MAX_TOTAL_BYTES = 50 * 1024 * 1024;
+    let totalBytes = 0;
+    for (const f of files) {
+      totalBytes += Number(f.size || 0);
+      if (Number(f.size || 0) > MAX_FILE_BYTES) {
+        return NextResponse.json({ error: 'File is too large.' }, { status: 400 });
+      }
+      if (totalBytes > MAX_TOTAL_BYTES) {
+        return NextResponse.json({ error: 'Total upload is too large.' }, { status: 400 });
+      }
+    }
 
     const saved: {
       name: string;
@@ -133,7 +149,7 @@ export async function POST(
     }[] = [];
     for (const file of files) {
       const random = crypto.randomBytes(6).toString('hex');
-      const base = safeFileName(file.name || 'attachment');
+      const base = safeFileName((file.name || 'attachment').slice(0, 180));
       const finalName = `${Date.now()}-${random}-${base}`;
       const bytes = Buffer.from(await file.arrayBuffer());
       await writeFile(path.join(dir, finalName), bytes);
