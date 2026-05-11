@@ -19,10 +19,24 @@ function HomeInner() {
   const [sectionFilter, setSectionFilter] = useState('');
   const [viewArchived, setViewArchived] = useState(false);
   const [isLoaded, setIsLoaded] = useState(false);
-  const [summary, setSummary] = useState<{ total: number; pending: number; completed: number }>({
-    total: 0,
-    pending: 0,
-    completed: 0,
+  const [summary, setSummary] = useState<{
+    active: {
+      total: number;
+      pending: number;
+      completed: number;
+      overdue: number;
+      documentTypes: Array<{ type: string; count: number }>;
+    };
+    archived: {
+      total: number;
+      pending: number;
+      completed: number;
+      completedOverdue: number;
+      documentTypes: Array<{ type: string; count: number }>;
+    };
+  }>({
+    active: { total: 0, pending: 0, completed: 0, overdue: 0, documentTypes: [] },
+    archived: { total: 0, pending: 0, completed: 0, completedOverdue: 0, documentTypes: [] },
   });
   const [deleteModal, setDeleteModal] = useState<{ isOpen: boolean; trackingNumber: string }>({
     isOpen: false,
@@ -39,6 +53,7 @@ function HomeInner() {
     trackingNumber: '',
   });
   const [highlightedId, setHighlightedId] = useState<string>('');
+  const [showAllDocTypes, setShowAllDocTypes] = useState(false);
   const { theme } = useThemeValue();
 
   useEffect(() => {
@@ -75,11 +90,37 @@ function HomeInner() {
         const countsResponse = await fetch('/api/edats?counts=1');
         if (countsResponse.ok) {
           const counts = await countsResponse.json();
-          setSummary({
-            total: Number(counts?.total || 0),
-            pending: Number(counts?.pending || 0),
-            completed: Number(counts?.completed || 0),
-          });
+          const active = counts?.active;
+          const archived = counts?.archived;
+          if (active && archived) {
+            setSummary({
+              active: {
+                total: Number(active?.total || 0),
+                pending: Number(active?.pending || 0),
+                completed: Number(active?.completed || 0),
+                overdue: Number(active?.overdue || 0),
+                documentTypes: Array.isArray(active?.documentTypes) ? active.documentTypes : [],
+              },
+              archived: {
+                total: Number(archived?.total || 0),
+                pending: Number(archived?.pending || 0),
+                completed: Number(archived?.completed || 0),
+                completedOverdue: Number(archived?.completedOverdue || 0),
+                documentTypes: Array.isArray(archived?.documentTypes) ? archived.documentTypes : [],
+              },
+            });
+          } else {
+            setSummary((prev) => ({
+              active: {
+                total: Number(counts?.total || 0),
+                pending: Number(counts?.pending || 0),
+                completed: Number(counts?.completed || 0),
+                overdue: prev.active.overdue,
+                documentTypes: prev.active.documentTypes,
+              },
+              archived: prev.archived,
+            }));
+          }
         }
       } catch (e) {
         console.error('Failed to fetch records', e);
@@ -226,7 +267,28 @@ function HomeInner() {
     }
   };
 
-  const stats = summary;
+  const statsActive = summary.active;
+  const statsArchived = summary.archived;
+  const selectedStats = viewArchived ? statsArchived : statsActive;
+
+  const documentTypeBreakdown = useMemo(() => {
+    const list = Array.isArray(selectedStats.documentTypes) ? selectedStats.documentTypes : [];
+    const normalized = list
+      .map((t) => ({
+        type: (t?.type || '').trim() || 'Unspecified',
+        count: Number(t?.count || 0),
+      }))
+      .filter((t) => t.count > 0);
+
+    normalized.sort((a, b) => {
+      if (b.count !== a.count) return b.count - a.count;
+      return a.type.localeCompare(b.type);
+    });
+
+    return {
+      items: normalized,
+    };
+  }, [selectedStats.documentTypes]);
 
   if (!isLoaded) return null;
 
@@ -300,19 +362,90 @@ function HomeInner() {
             </div>
           </div>
 
-          {/* Quick Stats Grid */}
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mt-6">
+          <div className="mt-6">
             <div className="bg-white/60 dark:bg-emerald-900/20 backdrop-blur-md border border-emerald-100 dark:border-emerald-800/50 p-4 rounded-2xl shadow-sm">
-              <div className="text-[10px] font-black text-emerald-600/60 dark:text-emerald-400/60 uppercase tracking-widest mb-1">Total Registry</div>
-              <div className="text-2xl font-black text-emerald-900 dark:text-emerald-50">{stats.total}</div>
-            </div>
-            <div className="bg-white/60 dark:bg-emerald-900/20 backdrop-blur-md border border-emerald-100 dark:border-emerald-800/50 p-4 rounded-2xl shadow-sm">
-              <div className="text-[10px] font-black text-amber-600/60 dark:text-amber-400/60 uppercase tracking-widest mb-1">Pending Action</div>
-              <div className="text-2xl font-black text-amber-600 dark:text-amber-400">{stats.pending}</div>
-            </div>
-            <div className="bg-white/60 dark:bg-emerald-900/20 backdrop-blur-md border border-emerald-100 dark:border-emerald-800/50 p-4 rounded-2xl shadow-sm">
-              <div className="text-[10px] font-black text-emerald-600/60 dark:text-emerald-400/60 uppercase tracking-widest mb-1">Completed</div>
-              <div className="text-2xl font-black text-emerald-600 dark:text-emerald-400">{stats.completed}</div>
+              <div className="text-[10px] font-black text-emerald-600/60 dark:text-emerald-400/60 uppercase tracking-widest mb-3">
+                {viewArchived ? 'Archive' : 'Active'}
+              </div>
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <div className="text-[10px] font-black text-emerald-600/60 dark:text-emerald-400/60 uppercase tracking-widest mb-1">Total</div>
+                  <div className="text-2xl font-black text-emerald-900 dark:text-emerald-50">
+                    {selectedStats.total}
+                  </div>
+                </div>
+                <div>
+                  <div className={`text-[10px] font-black uppercase tracking-widest mb-1 ${
+                    viewArchived
+                      ? 'text-red-600/60 dark:text-red-400/60'
+                      : 'text-amber-600/60 dark:text-amber-400/60'
+                  }`}>
+                    {viewArchived ? 'Completed Overdue' : 'Pending'}
+                  </div>
+                  <div className={`text-2xl font-black ${
+                    viewArchived
+                      ? 'text-red-600 dark:text-red-400'
+                      : 'text-amber-600 dark:text-amber-400'
+                  }`}>
+                    {viewArchived ? summary.archived.completedOverdue : summary.active.pending}
+                  </div>
+                </div>
+                <div>
+                  <div className={`text-[10px] font-black uppercase tracking-widest mb-1 ${
+                    viewArchived
+                      ? 'text-emerald-600/60 dark:text-emerald-400/60'
+                      : 'text-red-600/60 dark:text-red-400/60'
+                  }`}>
+                    {viewArchived ? 'Completed' : 'Overdue'}
+                  </div>
+                  <div className={`text-2xl font-black ${
+                    viewArchived
+                      ? 'text-emerald-600 dark:text-emerald-400'
+                      : 'text-red-600 dark:text-red-400'
+                  }`}>
+                    {viewArchived ? summary.archived.completed : summary.active.overdue}
+                  </div>
+                </div>
+              </div>
+              <div className="mt-4 pt-3 border-t border-emerald-200/60 dark:border-emerald-800/60">
+                <div className="flex items-center justify-between gap-3 mb-2">
+                  <div className="text-[10px] font-black text-emerald-600/60 dark:text-emerald-400/60 uppercase tracking-widest">
+                    Document Types
+                  </div>
+                  {documentTypeBreakdown.items.length > 6 ? (
+                    <button
+                      type="button"
+                      onClick={() => setShowAllDocTypes((v) => !v)}
+                      className="text-[10px] font-black uppercase tracking-widest text-emerald-700/70 hover:text-emerald-900 dark:text-emerald-300/70 dark:hover:text-emerald-50 transition-colors"
+                    >
+                      {showAllDocTypes ? 'Show Less' : 'Show More'}
+                    </button>
+                  ) : null}
+                </div>
+
+                {documentTypeBreakdown.items.length > 0 ? (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+                    {(showAllDocTypes ? documentTypeBreakdown.items : documentTypeBreakdown.items.slice(0, 6)).map((t) => (
+                      <div
+                        key={t.type}
+                        className="rounded-xl border border-emerald-200/60 dark:border-emerald-800/60 bg-white/60 dark:bg-emerald-950/20 px-4 py-3"
+                        title={`${t.type}: ${t.count}`}
+                      >
+                        <div className="text-xs font-black text-emerald-600/70 dark:text-emerald-400/70 uppercase tracking-widest truncate">
+                          {t.type}
+                        </div>
+                        <div className="text-2xl sm:text-3xl font-black text-emerald-900 dark:text-emerald-50 font-mono leading-none mt-1">
+                          {t.count}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-xs font-semibold text-emerald-700/60 dark:text-emerald-300/60">
+                    No document types yet.
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </header>

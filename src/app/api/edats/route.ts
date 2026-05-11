@@ -63,6 +63,60 @@ const getPhilippinesDatePartYYYYMMDD = (value: unknown): string => {
   return formatted.replace(/-/g, '');
 };
 
+const normalizeToManilaYYYYMMDD = (value: unknown): string => {
+  if (!value) return '';
+  if (typeof value === 'string') {
+    const direct = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
+    if (direct) return `${direct[1]}-${direct[2]}-${direct[3]}`;
+    const d = new Date(value);
+    if (!Number.isNaN(d.getTime())) return getManilaDateYYYYMMDD(d);
+    const loose = /^(\d{4})-(\d{2})-(\d{2})/.exec(value.trim());
+    if (loose) return `${loose[1]}-${loose[2]}-${loose[3]}`;
+    return '';
+  }
+  if (value instanceof Date && !Number.isNaN(value.getTime())) return getManilaDateYYYYMMDD(value);
+  return '';
+};
+
+const parseYYYYMMDDToUtcMidnight = (value: string) => {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return null;
+  const y = Number(match[1]);
+  const m = Number(match[2]);
+  const d = Number(match[3]);
+  if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) return null;
+  return new Date(Date.UTC(y, m - 1, d));
+};
+
+const parseHHMMSSToSeconds = (value: string) => {
+  const match = /^(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(value.trim());
+  if (!match) return null;
+  const h = Number(match[1]);
+  const m = Number(match[2]);
+  const s = Number(match[3] ?? '0');
+  if (![h, m, s].every(Number.isFinite)) return null;
+  if (h < 0 || h > 23 || m < 0 || m > 59 || s < 0 || s > 59) return null;
+  return h * 3600 + m * 60 + s;
+};
+
+const getManilaDateTimeParts = (date: Date) => ({ ymd: getManilaDateYYYYMMDD(date), hms: getManilaTimeHHMMSS(date) });
+
+const toUtcMillisFromManilaParts = (ymd: string, hms: string | null | undefined) => {
+  const dateUtc = parseYYYYMMDDToUtcMidnight(ymd);
+  if (!dateUtc) return null;
+  const seconds = hms ? parseHHMMSSToSeconds(hms) : 0;
+  if (seconds === null) return dateUtc.getTime();
+  return dateUtc.getTime() + seconds * 1000;
+};
+
+const addDaysUtc = (dateUtc: Date, days: number) => new Date(dateUtc.getTime() + days * 24 * 60 * 60 * 1000);
+
+const dueDaysFor = (dueIn: unknown) => {
+  if (dueIn === 'technical') return 7;
+  if (dueIn === 'highlyTechnical') return 20;
+  return 3;
+};
+
 const getNextTrackingSequenceForDate = async (datePartYYYYMMDD: string): Promise<number> => {
   const like = `PMD-${datePartYYYYMMDD}-%`;
   const [rows] = await pool.query<Array<RowDataPacket & { tracking_number: string }>>(
@@ -97,18 +151,158 @@ export async function GET(request: Request) {
     }
 
     if (url.searchParams.get('counts') === '1') {
-      const [rows] = await pool.query<Array<RowDataPacket & { total: number; pending: number; completed: number }>>(
+      const [rows] = await pool.query<
+        Array<
+          RowDataPacket & {
+            active_total: number;
+            active_pending: number;
+            active_completed: number;
+            archived_total: number;
+            archived_pending: number;
+            archived_completed: number;
+          }
+        >
+      >(
         `SELECT
-          SUM(1) AS total,
-          SUM(CASE WHEN archived = 0 AND LOWER(status) = 'pending' THEN 1 ELSE 0 END) AS pending,
-          SUM(CASE WHEN LOWER(status) = 'completed' THEN 1 ELSE 0 END) AS completed
+          SUM(CASE WHEN archived = 0 THEN 1 ELSE 0 END) AS active_total,
+          SUM(CASE WHEN archived = 0 AND LOWER(status) = 'pending' THEN 1 ELSE 0 END) AS active_pending,
+          SUM(CASE WHEN archived = 0 AND LOWER(status) = 'completed' THEN 1 ELSE 0 END) AS active_completed,
+          SUM(CASE WHEN archived = 1 THEN 1 ELSE 0 END) AS archived_total,
+          SUM(CASE WHEN archived = 1 AND LOWER(status) = 'pending' THEN 1 ELSE 0 END) AS archived_pending,
+          SUM(CASE WHEN archived = 1 AND LOWER(status) = 'completed' THEN 1 ELSE 0 END) AS archived_completed
         FROM edats_logs`
       );
-      const first = rows[0] || { total: 0, pending: 0, completed: 0 };
+
+      const [activeDueRows] = await pool.query<
+        Array<RowDataPacket & { tracking_number: string; date_forwarded: unknown; due_in: string }>
+      >(
+        `SELECT l.tracking_number, s.due_in, s.date_forwarded
+         FROM edats_logs l
+         JOIN edats_steps s
+           ON s.tracking_number = l.tracking_number
+          AND s.step_number = 1
+        WHERE l.archived = 0
+          AND LOWER(l.status) <> 'completed'`
+      );
+
+      const [archivedDueRows] = await pool.query<
+        Array<
+          RowDataPacket & {
+            tracking_number: string;
+            base_date_forwarded: unknown;
+            due_in: string;
+            end_date_received: unknown;
+            end_date_forwarded: unknown;
+            end_time_received: string | null;
+            end_created_at: unknown;
+          }
+        >
+      >(
+        `SELECT
+          l.tracking_number,
+          s1.due_in,
+          s1.date_forwarded AS base_date_forwarded,
+          sl.date_received AS end_date_received,
+          sl.date_forwarded AS end_date_forwarded,
+          sl.time_received AS end_time_received,
+          sl.created_at AS end_created_at
+        FROM edats_logs l
+        JOIN edats_steps s1
+          ON s1.tracking_number = l.tracking_number
+         AND s1.step_number = 1
+        JOIN (
+          SELECT tracking_number, MAX(step_number) AS max_step
+          FROM edats_steps
+          GROUP BY tracking_number
+        ) m
+          ON m.tracking_number = l.tracking_number
+        JOIN edats_steps sl
+          ON sl.tracking_number = m.tracking_number
+         AND sl.step_number = m.max_step
+        WHERE l.archived = 1
+          AND LOWER(l.status) = 'completed'`
+      );
+
+      const [typeRows] = await pool.query<
+        Array<RowDataPacket & { archived: number; document_type: string; count: number }>
+      >(
+        `SELECT
+          archived,
+          COALESCE(NULLIF(TRIM(document_type), ''), 'Unspecified') AS document_type,
+          COUNT(*) AS count
+        FROM edats_logs
+        GROUP BY archived, COALESCE(NULLIF(TRIM(document_type), ''), 'Unspecified')
+        ORDER BY archived ASC, count DESC, document_type ASC`
+      );
+      const first =
+        rows[0] || {
+          active_total: 0,
+          active_pending: 0,
+          active_completed: 0,
+          archived_total: 0,
+          archived_pending: 0,
+          archived_completed: 0,
+        };
+
+      const activeDocumentTypes: Array<{ type: string; count: number }> = [];
+      const archivedDocumentTypes: Array<{ type: string; count: number }> = [];
+      for (const r of typeRows) {
+        const item = { type: String(r.document_type || 'Unspecified'), count: Number(r.count || 0) };
+        if (Number(r.archived) === 1) archivedDocumentTypes.push(item);
+        else activeDocumentTypes.push(item);
+      }
+
+      const { ymd: nowYmd, hms: nowHms } = getManilaDateTimeParts(new Date());
+      const nowMs = toUtcMillisFromManilaParts(nowYmd, nowHms) ?? Date.now();
+
+      let activeOverdue = 0;
+      for (const r of activeDueRows) {
+        const baseYmd = normalizeToManilaYYYYMMDD(r.date_forwarded);
+        const baseUtc = baseYmd ? parseYYYYMMDDToUtcMidnight(baseYmd) : null;
+        if (!baseUtc) continue;
+        const dueUtc = addDaysUtc(baseUtc, dueDaysFor(r.due_in));
+        const dueMs = dueUtc.getTime() + (23 * 3600 + 59 * 60 + 59) * 1000;
+        if (nowMs > dueMs) activeOverdue += 1;
+      }
+
+      let archivedCompletedOverdue = 0;
+      for (const r of archivedDueRows) {
+        const baseYmd = normalizeToManilaYYYYMMDD(r.base_date_forwarded);
+        const baseUtc = baseYmd ? parseYYYYMMDDToUtcMidnight(baseYmd) : null;
+        if (!baseUtc) continue;
+        const dueUtc = addDaysUtc(baseUtc, dueDaysFor(r.due_in));
+        const dueMs = dueUtc.getTime() + (23 * 3600 + 59 * 60 + 59) * 1000;
+
+        const endCreatedAtDate = r.end_created_at instanceof Date ? r.end_created_at : new Date(String(r.end_created_at || ''));
+        const endCreatedAtParts = !Number.isNaN(endCreatedAtDate.getTime()) ? getManilaDateTimeParts(endCreatedAtDate) : null;
+        const completionYmd =
+          normalizeToManilaYYYYMMDD(r.end_date_received) ||
+          normalizeToManilaYYYYMMDD(r.end_date_forwarded) ||
+          (endCreatedAtParts?.ymd || '');
+        if (!completionYmd) continue;
+        const completionHms =
+          (r.end_time_received && r.end_time_received.trim()) ||
+          (endCreatedAtParts && endCreatedAtParts.ymd === completionYmd ? endCreatedAtParts.hms : '00:00:00');
+        const completionMs = toUtcMillisFromManilaParts(completionYmd, completionHms);
+        if (completionMs === null) continue;
+        if (completionMs > dueMs) archivedCompletedOverdue += 1;
+      }
+
       return NextResponse.json({
-        total: Number(first.total || 0),
-        pending: Number(first.pending || 0),
-        completed: Number(first.completed || 0),
+        active: {
+          total: Number(first.active_total || 0),
+          pending: Number(first.active_pending || 0),
+          completed: Number(first.active_completed || 0),
+          overdue: activeOverdue,
+          documentTypes: activeDocumentTypes,
+        },
+        archived: {
+          total: Number(first.archived_total || 0),
+          pending: Number(first.archived_pending || 0),
+          completed: Number(first.archived_completed || 0),
+          completedOverdue: archivedCompletedOverdue,
+          documentTypes: archivedDocumentTypes,
+        },
       });
     }
 

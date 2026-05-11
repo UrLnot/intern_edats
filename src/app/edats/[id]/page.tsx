@@ -184,12 +184,30 @@ const getStepDuration = (currentTime: Date, step: EDATStep) => {
 
 const getDocumentTotalDuration = (baseStep: EDATStep | null | undefined, completionStep: EDATStep | null | undefined) => {
   const startYmd = (baseStep?.dateForwarded || '').slice(0, 10);
-  const endYmd = ((completionStep?.dateReceived || completionStep?.dateForwarded || '') as string).slice(0, 10);
-  if (!startYmd || !endYmd) return null;
+  const startCreatedAtDate = baseStep?.createdAt ? new Date(baseStep.createdAt) : null;
+  const startCreatedAtParts =
+    startCreatedAtDate && !Number.isNaN(startCreatedAtDate.getTime()) ? getManilaDateTimeParts(startCreatedAtDate) : null;
 
-  const startMs = toUtcMillisFromManilaParts(startYmd, '00:00:00');
-  const endMs = toUtcMillisFromManilaParts(endYmd, completionStep?.timeReceived || '00:00:00');
-  if (startMs === null || endMs === null) return null;
+  const startMs = startYmd
+    ? (startCreatedAtParts && startCreatedAtParts.ymd === startYmd
+        ? toUtcMillisFromManilaParts(startCreatedAtParts.ymd, startCreatedAtParts.hms)
+        : toUtcMillisFromManilaParts(startYmd, '00:00:00'))
+    : (startCreatedAtParts ? toUtcMillisFromManilaParts(startCreatedAtParts.ymd, startCreatedAtParts.hms) : null);
+  if (startMs === null) return null;
+
+  const endYmd = ((completionStep?.dateReceived || completionStep?.dateForwarded || '') as string).slice(0, 10);
+  const endCreatedAtDate = completionStep?.createdAt ? new Date(completionStep.createdAt) : null;
+  const endCreatedAtParts =
+    endCreatedAtDate && !Number.isNaN(endCreatedAtDate.getTime()) ? getManilaDateTimeParts(endCreatedAtDate) : null;
+
+  const endMs = endYmd
+    ? toUtcMillisFromManilaParts(
+        endYmd,
+        completionStep?.timeReceived || (endCreatedAtParts && endCreatedAtParts.ymd === endYmd ? endCreatedAtParts.hms : '00:00:00')
+      )
+    : (endCreatedAtParts ? toUtcMillisFromManilaParts(endCreatedAtParts.ymd, endCreatedAtParts.hms) : null);
+
+  if (endMs === null) return null;
   return formatDuration(endMs - startMs);
 };
 
@@ -497,12 +515,12 @@ export default function EntryDetailsPage() {
       const updated = normalizeLog(await reloadResponse.json());
       setLog(updated);
       setSavedLog(updated);
-      setForwardData({
+      setForwardData((prev) => ({
         receiver: '',
-        section: '',
+        section: prev.section,
         actionTaken: '',
         actionRequired: [],
-      });
+      }));
       setToast({ show: true, message: 'Document forwarded successfully!', type: 'success' });
     } catch {
       setToast({ show: true, message: 'Failed to forward document.', type: 'error' });
@@ -554,8 +572,10 @@ export default function EntryDetailsPage() {
 
   useEffect(() => {
     if (!lockedSection) return;
-    setForwardData((prev) => (prev.section === lockedSection ? prev : { ...prev, section: lockedSection }));
-  }, [lockedSection]);
+    setForwardData((prev) =>
+      prev.section === lockedSection ? prev : { ...prev, section: lockedSection }
+    );
+  }, [lockedSection, forwardData.section]);
 
   const formattedDate = currentTime.toLocaleDateString('en-US', {
     weekday: 'short',

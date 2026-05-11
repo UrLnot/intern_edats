@@ -103,6 +103,23 @@ export default function EDATCards({ entries, onDelete, onView, highlightedId }: 
     return h * 3600 + m * 60 + s;
   };
 
+  const getManilaDateTimeParts = (date: Date) => {
+    const ymd = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Manila',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(date);
+    const hms = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Asia/Manila',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    }).format(date);
+    return { ymd, hms };
+  };
+
   const toUtcMillisFromManilaParts = (ymd: string, hms: string | null | undefined) => {
     const dateUtc = parseYYYYMMDDToUtcMidnight(ymd);
     if (!dateUtc) return null;
@@ -172,14 +189,35 @@ export default function EDATCards({ entries, onDelete, onView, highlightedId }: 
 
   const getDocumentTotalDuration = (log: EDATLog) => {
     if ((log.status || '').toLowerCase() !== 'completed') return null;
-    const startYmd = normalizeToManilaYYYYMMDD(log.steps[0]?.dateForwarded);
+    const first = log.steps.length > 0 ? log.steps[0] : null;
     const last = log.steps.length > 0 ? log.steps[log.steps.length - 1] : null;
-    const endYmd = normalizeToManilaYYYYMMDD(last?.dateReceived || last?.dateForwarded);
-    if (!startYmd || !endYmd) return null;
+    if (!first || !last) return null;
 
-    const startMs = toUtcMillisFromManilaParts(startYmd, '00:00:00');
-    const endMs = toUtcMillisFromManilaParts(endYmd, last?.timeReceived || '00:00:00');
-    if (startMs === null || endMs === null) return null;
+    const startYmd = normalizeToManilaYYYYMMDD(first.dateForwarded);
+    const startCreatedAtDate = first.createdAt ? new Date(first.createdAt) : null;
+    const startCreatedAtParts =
+      startCreatedAtDate && !Number.isNaN(startCreatedAtDate.getTime()) ? getManilaDateTimeParts(startCreatedAtDate) : null;
+
+    const startMs = startYmd
+      ? (startCreatedAtParts && startCreatedAtParts.ymd === startYmd
+          ? toUtcMillisFromManilaParts(startCreatedAtParts.ymd, startCreatedAtParts.hms)
+          : toUtcMillisFromManilaParts(startYmd, '00:00:00'))
+      : (startCreatedAtParts ? toUtcMillisFromManilaParts(startCreatedAtParts.ymd, startCreatedAtParts.hms) : null);
+    if (startMs === null) return null;
+
+    const endYmd = normalizeToManilaYYYYMMDD(last.dateReceived || last.dateForwarded);
+    const endCreatedAtDate = last.createdAt ? new Date(last.createdAt) : null;
+    const endCreatedAtParts =
+      endCreatedAtDate && !Number.isNaN(endCreatedAtDate.getTime()) ? getManilaDateTimeParts(endCreatedAtDate) : null;
+
+    const endMs = endYmd
+      ? toUtcMillisFromManilaParts(
+          endYmd,
+          last.timeReceived || (endCreatedAtParts && endCreatedAtParts.ymd === endYmd ? endCreatedAtParts.hms : '00:00:00')
+        )
+      : (endCreatedAtParts ? toUtcMillisFromManilaParts(endCreatedAtParts.ymd, endCreatedAtParts.hms) : null);
+
+    if (endMs === null) return null;
     return formatDuration(endMs - startMs);
   };
 
