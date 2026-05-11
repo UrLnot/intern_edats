@@ -133,9 +133,9 @@ export default function EDATCards({ entries, onDelete, onView, highlightedId }: 
     const days = Math.floor(totalSeconds / (24 * 3600));
     const hours = Math.floor((totalSeconds % (24 * 3600)) / 3600);
     const minutes = Math.floor((totalSeconds % 3600) / 60);
-    if (days > 0) return `${days}d ${hours}h`;
-    if (hours > 0) return `${hours}h ${minutes}m`;
-    return `${minutes}m`;
+    if (days > 0) return `${days} ${days === 1 ? 'day' : 'days'} ${hours} ${hours === 1 ? 'hr' : 'hrs'}`;
+    if (hours > 0) return `${hours} ${hours === 1 ? 'hr' : 'hrs'} ${minutes} ${minutes === 1 ? 'min' : 'mins'}`;
+    return `${minutes} ${minutes === 1 ? 'min' : 'mins'}`;
   };
 
   const addDaysUtc = (dateUtc: Date, days: number) => new Date(dateUtc.getTime() + days * 24 * 60 * 60 * 1000);
@@ -221,6 +221,30 @@ export default function EDATCards({ entries, onDelete, onView, highlightedId }: 
     return formatDuration(endMs - startMs);
   };
 
+  const getDocumentElapsedDuration = (log: EDATLog) => {
+    if ((log.status || '').toLowerCase() === 'completed') return null;
+    const first = log.steps.length > 0 ? log.steps[0] : null;
+    if (!first) return null;
+
+    const startYmd = normalizeToManilaYYYYMMDD(first.dateForwarded);
+    const startCreatedAtDate = first.createdAt ? new Date(first.createdAt) : null;
+    const startCreatedAtParts =
+      startCreatedAtDate && !Number.isNaN(startCreatedAtDate.getTime()) ? getManilaDateTimeParts(startCreatedAtDate) : null;
+
+    const startMs = startYmd
+      ? (startCreatedAtParts && startCreatedAtParts.ymd === startYmd
+          ? toUtcMillisFromManilaParts(startCreatedAtParts.ymd, startCreatedAtParts.hms)
+          : toUtcMillisFromManilaParts(startYmd, '00:00:00'))
+      : (startCreatedAtParts ? toUtcMillisFromManilaParts(startCreatedAtParts.ymd, startCreatedAtParts.hms) : null);
+    if (startMs === null) return null;
+
+    const now = new Date();
+    const nowParts = getManilaDateTimeParts(now);
+    const endMs = toUtcMillisFromManilaParts(nowParts.ymd, nowParts.hms);
+    if (endMs === null) return null;
+    return formatDuration(endMs - startMs);
+  };
+
   const formatTimeReceived = (timeStr: string | null | undefined) => {
     if (!timeStr) return '-';
     const cleaned = timeStr.split('.')[0] ?? '';
@@ -248,6 +272,7 @@ export default function EDATCards({ entries, onDelete, onView, highlightedId }: 
         const completionStep = log.status?.toLowerCase() === 'completed' ? latestStep : null;
         const dueCountdown = getDueStatus(baseDueStep, completionStep);
         const documentTotalDuration = getDocumentTotalDuration(log);
+        const documentElapsedDuration = getDocumentElapsedDuration(log);
         const lastActionStep = [...log.steps].reverse().find(s => Boolean((s.actionTaken || '').trim())) ?? null;
         const currentHolder = latestPendingStep?.receiver
           ? latestPendingStep.receiver
@@ -450,15 +475,15 @@ export default function EDATCards({ entries, onDelete, onView, highlightedId }: 
               {(log.status || '').toLowerCase() === 'completed' ? (
                 <>
                   <span className="text-[8px] font-black uppercase tracking-widest text-emerald-600/40 dark:text-emerald-400/40">Finished In</span>
-                  <span className="text-[10px] font-bold text-emerald-800/60 dark:text-emerald-300/60 font-mono">
+                  <span className="text-sm sm:text-base font-black text-emerald-800/70 dark:text-emerald-200/80 font-mono leading-none">
                     {documentTotalDuration || '-'}
                   </span>
                 </>
               ) : (
                 <>
-                  <span className="text-[8px] font-black uppercase tracking-widest text-emerald-600/40 dark:text-emerald-400/40">Received On</span>
-                  <span className="text-[10px] font-bold text-emerald-800/60 dark:text-emerald-300/60 font-mono">
-                    {latestStep?.dateReceived ? `${format(new Date(latestStep.dateReceived), 'MM/dd/yy')} ${formatTimeReceived(latestStep.timeReceived)}` : 'Not yet'}
+                  <span className="text-[8px] font-black uppercase tracking-widest text-emerald-600/40 dark:text-emerald-400/40">Elapsed</span>
+                  <span className="text-sm sm:text-base font-black text-emerald-800/70 dark:text-emerald-200/80 font-mono leading-none">
+                    {documentElapsedDuration || '-'}
                   </span>
                 </>
               )}
