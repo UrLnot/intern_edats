@@ -140,27 +140,43 @@ function NewEntryPageContent() {
     return { category, role, level };
   };
 
+  const isDivisionChief = (position: string, section: string) => {
+    const hay = `${position || ''} ${section || ''}`.toLowerCase();
+    return hay.includes('division chief') || (hay.includes('chief') && hay.includes('division'));
+  };
+
   const groupedEmployees = useMemo(() => {
+    const divisionChiefs: Array<{ id: number; name: string; position: string; section: string }> = [];
     const bySection = new Map<string, Array<{ id: number; name: string; position: string; section: string }>>();
     for (const e of employees) {
+      if (isDivisionChief(e.position, e.section)) {
+        divisionChiefs.push(e);
+        continue;
+      }
       const section = canonicalizeSection(e.section || '') || 'Other';
       const list = bySection.get(section) || [];
       list.push(e);
       bySection.set(section, list);
     }
 
+    const sortPeople = (list: Array<{ id: number; name: string; position: string; section: string }>) =>
+      [...list].sort((a, b) => {
+        const ak = positionSortKey(a.position);
+        const bk = positionSortKey(b.position);
+        if (ak.category !== bk.category) return ak.category - bk.category;
+        if (ak.role !== bk.role) return ak.role.localeCompare(bk.role);
+        if (ak.level !== bk.level) return bk.level - ak.level;
+        return a.name.localeCompare(b.name);
+      });
+
     const sortedSections = Array.from(bySection.keys()).sort((a, b) => a.localeCompare(b));
-    return sortedSections.map((section) => {
-      const people = [...(bySection.get(section) || [])].sort((a, b) => {
-      const ak = positionSortKey(a.position);
-      const bk = positionSortKey(b.position);
-      if (ak.category !== bk.category) return ak.category - bk.category;
-      if (ak.role !== bk.role) return ak.role.localeCompare(bk.role);
-      if (ak.level !== bk.level) return bk.level - ak.level;
-      return a.name.localeCompare(b.name);
-    });
-      return { section, people };
-    });
+    const groups = sortedSections.map((section) => ({ section, people: sortPeople(bySection.get(section) || []) }));
+
+    if (divisionChiefs.length > 0) {
+      return [{ section: 'Division Chief', people: sortPeople(divisionChiefs) }, ...groups];
+    }
+
+    return groups;
   }, [employees]);
 
   useEffect(() => {
@@ -443,19 +459,39 @@ function NewEntryPageContent() {
                       Select receiver
                     </option>
                   )}
-                  {groupedEmployees.map((group) => (
-                    <optgroup
-                      key={group.section}
-                      label={group.section}
-                      className="bg-emerald-50 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-50"
-                    >
-                      {group.people.map((e) => (
-                        <option key={e.id} value={e.name} className="bg-white text-emerald-900 dark:bg-emerald-950 dark:text-emerald-50">
-                          {e.name} — {e.position}
-                        </option>
-                      ))}
-                    </optgroup>
-                  ))}
+                  {(() => {
+                    const divisionChiefGroup = groupedEmployees.find((g) => g.section === 'Division Chief') || null;
+                    const otherGroups = groupedEmployees.filter((g) => g.section !== 'Division Chief');
+                    return (
+                      <>
+                        {divisionChiefGroup
+                          ? divisionChiefGroup.people.map((e) => (
+                              <option key={e.id} value={e.name} className="bg-white text-emerald-900 dark:bg-emerald-950 dark:text-emerald-50">
+                                {e.name} — {e.position}
+                              </option>
+                            ))
+                          : null}
+                        {divisionChiefGroup && otherGroups.length > 0 ? (
+                          <option value="__divider__" disabled className="bg-white text-emerald-900 dark:bg-emerald-950 dark:text-emerald-50">
+                            ──────────
+                          </option>
+                        ) : null}
+                        {otherGroups.map((group) => (
+                          <optgroup
+                            key={group.section}
+                            label={group.section}
+                            className="bg-emerald-50 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-50"
+                          >
+                            {group.people.map((e) => (
+                              <option key={e.id} value={e.name} className="bg-white text-emerald-900 dark:bg-emerald-950 dark:text-emerald-50">
+                                {e.name} — {e.position}
+                              </option>
+                            ))}
+                          </optgroup>
+                        ))}
+                      </>
+                    );
+                  })()}
                 </select>
                 {selectedReceiverInfo ? (
                   <div className="mt-1 text-xs text-emerald-700/70 dark:text-emerald-300/70">

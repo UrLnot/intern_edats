@@ -368,6 +368,11 @@ export default function EntryDetailsPage() {
     return { category, role, level };
   };
 
+  const isDivisionChief = (position: string, section: string) => {
+    const hay = `${position || ''} ${section || ''}`.toLowerCase();
+    return hay.includes('division chief') || (hay.includes('chief') && hay.includes('division'));
+  };
+
   const filteredReceivers = useMemo(() => {
     const section = canonicalizeSection(forwardData.section || '');
     const list = section
@@ -383,6 +388,18 @@ export default function EntryDetailsPage() {
       return a.name.localeCompare(b.name);
     });
   }, [employees, forwardData.section]);
+
+  const receiverGroups = useMemo(() => {
+    const chiefs: typeof filteredReceivers = [];
+    const others: typeof filteredReceivers = [];
+    for (const e of filteredReceivers) {
+      if (isDivisionChief(e.position, e.section)) chiefs.push(e);
+      else others.push(e);
+    }
+    if (chiefs.length === 0) return null;
+    const sectionLabel = canonicalizeSection(forwardData.section || '').trim() || 'Receivers';
+    return { chiefs, others, sectionLabel };
+  }, [filteredReceivers, forwardData.section]);
 
   useEffect(() => {
     if (!forwardData.receiver) return;
@@ -880,11 +897,33 @@ export default function EntryDetailsPage() {
                             Select receiver
                           </option>
                         )}
-                        {filteredReceivers.map((e) => (
-                          <option key={e.id} value={e.name}>
-                            {e.name} — {e.position}
-                          </option>
-                        ))}
+                        {receiverGroups
+                          ? (
+                            <>
+                              {receiverGroups.chiefs.map((e) => (
+                                <option key={e.id} value={e.name}>
+                                  {e.name} — {e.position}
+                                </option>
+                              ))}
+                              {receiverGroups.others.length > 0 ? (
+                                <>
+                                  <option value="__divider__" disabled>
+                                    ──────────
+                                  </option>
+                                  {receiverGroups.others.map((e) => (
+                                    <option key={e.id} value={e.name}>
+                                      {e.name} — {e.position}
+                                    </option>
+                                  ))}
+                                </>
+                              ) : null}
+                            </>
+                          )
+                          : filteredReceivers.map((e) => (
+                              <option key={e.id} value={e.name}>
+                                {e.name} — {e.position}
+                              </option>
+                            ))}
                       </select>
                       {employeesByName.get(forwardData.receiver)?.position ? (
                         <div className="text-[11px] text-emerald-700/70 dark:text-emerald-300/70 mt-1">
