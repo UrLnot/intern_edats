@@ -7,6 +7,7 @@ import ThemeToggle from '@/components/ThemeToggle';
 import { ArrowLeft, LogOut, Paperclip, Trees, X } from 'lucide-react';
 import FeedbackToast from '@/components/FeedbackToast';
 
+/** Returns the current date/time formatted in Asia/Manila, using YYYY-MM-DD and 24h time. */
 const getCurrentManilaDateTime = () => {
   const now = new Date();
   const date = new Intl.DateTimeFormat('en-CA', {
@@ -93,8 +94,10 @@ function NewEntryPageContent() {
     };
   }, []);
 
+  /** Looks up the selected receiver so the UI can show position/section under the dropdown. */
   const selectedReceiverInfo = employees.find((e) => e.name === formData.receiver) || null;
 
+  /** Normalizes section names so grouping stays consistent even when DB values vary slightly. */
   const canonicalizeSection = (value: string) => {
     const raw = (value || '').trim();
     const v = raw.toLowerCase();
@@ -106,6 +109,7 @@ function NewEntryPageContent() {
     return raw;
   };
 
+  /** Converts simple roman numerals (I/V/X) to an integer for position sorting. */
   const romanToInt = (roman: string) => {
     const map: Record<string, number> = { I: 1, V: 5, X: 10 };
     const s = roman.toUpperCase().trim();
@@ -120,6 +124,7 @@ function NewEntryPageContent() {
     return total;
   };
 
+  /** Produces a stable ordering for positions (chief/unit head first, then roles, then roman numeral level). */
   const positionSortKey = (position: string) => {
     const raw = (position || '').trim();
     const p = raw.toLowerCase();
@@ -140,11 +145,13 @@ function NewEntryPageContent() {
     return { category, role, level };
   };
 
+  /** Detects a Division Chief record using position/section text from the database. */
   const isDivisionChief = (position: string, section: string) => {
     const hay = `${position || ''} ${section || ''}`.toLowerCase();
     return hay.includes('division chief') || (hay.includes('chief') && hay.includes('division'));
   };
 
+  /** Groups employees by section while keeping the Division Chief entries in a separate segment. */
   const groupedEmployees = useMemo(() => {
     const divisionChiefs: Array<{ id: number; name: string; position: string; section: string }> = [];
     const bySection = new Map<string, Array<{ id: number; name: string; position: string; section: string }>>();
@@ -218,6 +225,7 @@ function NewEntryPageContent() {
       })
     : '—';
 
+  /** Logs the user out and redirects back to the login screen. */
   const handleLogout = async () => {
     try {
       await fetch('/api/auth/logout', { method: 'POST' });
@@ -227,11 +235,13 @@ function NewEntryPageContent() {
     }
   };
 
+  /** Unified change handler for simple input/select/textarea fields. */
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
     setFormData((prev) => ({ ...prev, [name]: value }));
   };
 
+  /** Adds/removes an Action Required option from the current selection. */
   const toggleActionRequired = (option: (typeof ACTION_REQUIRED_OPTIONS)[number]) => {
     setFormData((prev) => ({
       ...prev,
@@ -241,6 +251,7 @@ function NewEntryPageContent() {
     }));
   };
 
+  /** Adds files from the file input into local state (deduped by name/size/lastModified). */
   const addAttachments = (files: FileList | null) => {
     if (!files || files.length === 0) return;
     const incoming = Array.from(files);
@@ -255,10 +266,12 @@ function NewEntryPageContent() {
     });
   };
 
+  /** Removes an attachment by index. */
   const removeAttachment = (index: number) => {
     setAttachments((prev) => prev.filter((_, i) => i !== index));
   };
 
+  /** Human-readable file size formatting. */
   const formatBytes = (bytes: number) => {
     if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
     const units = ['B', 'KB', 'MB', 'GB'];
@@ -267,6 +280,7 @@ function NewEntryPageContent() {
     return `${value.toFixed(value >= 10 || i === 0 ? 0 : 1)} ${units[i]}`;
   };
 
+  /** Creates a new EDAT entry, uploads attachments if any, then routes back to the list view. */
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);

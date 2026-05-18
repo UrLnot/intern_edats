@@ -17,6 +17,7 @@ const EMPTY_LOG: EDATLog = {
   steps: [],
 };
 
+/** Returns the current date/time formatted in Asia/Manila, using YYYY-MM-DD and 24h time. */
 const getCurrentManilaDateTime = () => {
   const now = new Date();
   const date = new Intl.DateTimeFormat('en-CA', {
@@ -35,6 +36,7 @@ const getCurrentManilaDateTime = () => {
   return { date, time };
 };
 
+/** Formats a Date into a Manila-local YYYY-MM-DD string. */
 const formatManilaDateYYYYMMDD = (date: Date) =>
   new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Manila',
@@ -43,6 +45,7 @@ const formatManilaDateYYYYMMDD = (date: Date) =>
     day: '2-digit',
   }).format(date);
 
+/** Normalizes various date-like inputs into a Manila-local YYYY-MM-DD string (or '' when invalid). */
 const normalizeToManilaYYYYMMDD = (value: unknown): string => {
   if (!value) return '';
   if (typeof value === 'string') {
@@ -58,6 +61,7 @@ const normalizeToManilaYYYYMMDD = (value: unknown): string => {
   return '';
 };
 
+/** Parses YYYY-MM-DD into a Date at UTC midnight (used as a stable day bucket for computations). */
 const parseYYYYMMDDToUtcMidnight = (value: string) => {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
   if (!match) return null;
@@ -68,6 +72,7 @@ const parseYYYYMMDDToUtcMidnight = (value: string) => {
   return new Date(Date.UTC(y, m - 1, d));
 };
 
+/** Parses HH:MM[:SS] and returns seconds since midnight (or null on invalid input). */
 const parseHHMMSSToSeconds = (value: string) => {
   const match = /^(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(value.trim());
   if (!match) return null;
@@ -79,6 +84,7 @@ const parseHHMMSSToSeconds = (value: string) => {
   return h * 3600 + m * 60 + s;
 };
 
+/** Extracts Manila-local calendar date (YYYY-MM-DD) and time (HH:MM:SS) from a Date. */
 const getManilaDateTimeParts = (date: Date) => {
   const ymd = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Manila',
@@ -96,6 +102,7 @@ const getManilaDateTimeParts = (date: Date) => {
   return { ymd, hms };
 };
 
+/** Converts Manila-local YYYY-MM-DD (+ optional time) into a UTC timestamp for duration math. */
 const toUtcMillisFromManilaParts = (ymd: string, hms: string | null | undefined) => {
   const dateUtc = parseYYYYMMDDToUtcMidnight(ymd);
   if (!dateUtc) return null;
@@ -104,14 +111,17 @@ const toUtcMillisFromManilaParts = (ymd: string, hms: string | null | undefined)
   return dateUtc.getTime() + seconds * 1000;
 };
 
+/** Adds whole days to a UTC date (used for due date computation). */
 const addDaysUtc = (dateUtc: Date, days: number) => new Date(dateUtc.getTime() + days * 24 * 60 * 60 * 1000);
 
+/** Maps due-in types to the SLA day count. */
 const dueDaysFor = (dueIn: DueInType | null | undefined) => {
   if (dueIn === 'technical') return 7;
   if (dueIn === 'highlyTechnical') return 20;
   return 3;
 };
 
+/** Computes a human-friendly due status label/tone (due today, overdue, completed late, etc.). */
 const getDueCountdown = (currentTime: Date, baseStep: EDATStep | null | undefined, completionStep: EDATStep | null | undefined) => {
   const forwarded = (baseStep?.dateForwarded || '').slice(0, 10);
   const forwardedUtc = forwarded ? parseYYYYMMDDToUtcMidnight(forwarded) : null;
@@ -148,6 +158,7 @@ const getDueCountdown = (currentTime: Date, baseStep: EDATStep | null | undefine
   return { label: `${diffDays} days left`, dueDateStr, tone: 'ok' as const };
 };
 
+/** Formats a duration in milliseconds into a compact "X days Y hrs" style string. */
 const formatDuration = (ms: number) => {
   const totalSeconds = Math.max(0, Math.floor(ms / 1000));
   const days = Math.floor(totalSeconds / (24 * 3600));
@@ -158,6 +169,7 @@ const formatDuration = (ms: number) => {
   return `${minutes} ${minutes === 1 ? 'min' : 'mins'}`;
 };
 
+/** Calculates elapsed/total time for a single step based on forwarded/received dates and timestamps. */
 const getStepDuration = (currentTime: Date, step: EDATStep) => {
   const startYmd = (step.dateForwarded || '').slice(0, 10);
   const createdAtDate = step.createdAt ? new Date(step.createdAt) : null;
@@ -182,6 +194,7 @@ const getStepDuration = (currentTime: Date, step: EDATStep) => {
   return `${label} ${formatDuration(endMs - startMs)}`;
 };
 
+/** Calculates total duration from the first step to completion (used in the summary UI). */
 const getDocumentTotalDuration = (baseStep: EDATStep | null | undefined, completionStep: EDATStep | null | undefined) => {
   const startYmd = (baseStep?.dateForwarded || '').slice(0, 10);
   const startCreatedAtDate = baseStep?.createdAt ? new Date(baseStep.createdAt) : null;
@@ -211,6 +224,7 @@ const getDocumentTotalDuration = (baseStep: EDATStep | null | undefined, complet
   return formatDuration(endMs - startMs);
 };
 
+/** Sanitizes/normalizes the API payload into a stable EDATLog shape for the UI. */
 const normalizeLog = (value: unknown): EDATLog => {
   if (!value || typeof value !== 'object') return { ...EMPTY_LOG };
   const v = value as Record<string, unknown>;
@@ -317,12 +331,14 @@ export default function EntryDetailsPage() {
     };
   }, []);
 
+  /** Quick lookup map for showing receiver position/section details in the UI. */
   const employeesByName = useMemo(() => {
     const map = new Map<string, { position: string; section: string }>();
     for (const e of employees) map.set(e.name, { position: e.position, section: e.section });
     return map;
   }, [employees]);
 
+  /** Normalizes section names so filtering/grouping stays consistent. */
   const canonicalizeSection = (value: string) => {
     const raw = (value || '').trim();
     const v = raw.toLowerCase();
@@ -334,6 +350,7 @@ export default function EntryDetailsPage() {
     return raw;
   };
 
+  /** Converts simple roman numerals (I/V/X) to an integer for position sorting. */
   const romanToInt = (roman: string) => {
     const map: Record<string, number> = { I: 1, V: 5, X: 10 };
     const s = roman.toUpperCase().trim();
@@ -348,6 +365,7 @@ export default function EntryDetailsPage() {
     return total;
   };
 
+  /** Produces a stable ordering for positions (chief/unit head first, then roles, then roman numeral level). */
   const positionSortKey = (position: string) => {
     const raw = (position || '').trim();
     const p = raw.toLowerCase();
@@ -368,11 +386,13 @@ export default function EntryDetailsPage() {
     return { category, role, level };
   };
 
+  /** Detects a Division Chief record using position/section text from the database. */
   const isDivisionChief = (position: string, section: string) => {
     const hay = `${position || ''} ${section || ''}`.toLowerCase();
     return hay.includes('division chief') || (hay.includes('chief') && hay.includes('division'));
   };
 
+  /** Filters receivers by selected section and sorts them by position priority and name. */
   const filteredReceivers = useMemo(() => {
     const section = canonicalizeSection(forwardData.section || '');
     const list = section
@@ -389,6 +409,7 @@ export default function EntryDetailsPage() {
     });
   }, [employees, forwardData.section]);
 
+  /** Splits Division Chief entries out so they can appear as an unlabelled top segment in the select. */
   const receiverGroups = useMemo(() => {
     const chiefs: typeof filteredReceivers = [];
     const others: typeof filteredReceivers = [];
@@ -463,22 +484,27 @@ export default function EntryDetailsPage() {
     loadAttachments();
   }, [params.id]);
 
+  /** Toggles edit mode for a given field, reverting unsaved changes when exiting edit mode. */
   const toggleEdit = (field: FieldKey) => {
     setLog((prev) => (activeEdit ? { ...savedLog } : prev));
     setActiveEdit((prev) => (prev === field ? null : field));
   };
 
+  /** True when the given field is currently being edited. */
   const isEditing = (field: FieldKey) => activeEdit === field;
 
+  /** Updates a single log field in state. */
   const setLogField = <K extends keyof EDATLog>(field: K, value: EDATLog[K]) => {
     setLog((prev) => ({ ...prev, [field]: value }));
   };
 
+  /** Cancels edit mode and restores the last saved value for the edited field. */
   const cancelEdit = (field: FieldKey) => {
     setLog((prev) => ({ ...prev, [field]: savedLog[field] }));
     setActiveEdit(null);
   };
 
+  /** Persists the editable log details (subject/documentType). */
   const saveLogDetails = async () => {
     setSaving(true);
     try {
@@ -506,6 +532,7 @@ export default function EntryDetailsPage() {
     }
   };
 
+  /** Completes the current step and forwards the document to the next receiver. */
   const handleForward = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!forwardData.receiver.trim()) {
@@ -546,6 +573,7 @@ export default function EntryDetailsPage() {
     }
   };
 
+  /** Marks the log as finalized/completed after user confirmation. */
   const confirmFinalize = async () => {
     setSaving(true);
     try {
@@ -572,6 +600,7 @@ export default function EntryDetailsPage() {
     }
   };
 
+  /** Opens the finalize confirmation modal. */
   const handleFinalize = () => {
     setShowFinalizeConfirm(true);
   };
@@ -606,6 +635,7 @@ export default function EntryDetailsPage() {
     second: '2-digit',
   });
 
+  /** Logs the user out and redirects back to the login screen. */
   const handleLogout = async () => {
     try {
       await fetch('/api/auth/logout', { method: 'POST' });
@@ -617,6 +647,7 @@ export default function EntryDetailsPage() {
 
   if (loading) return <div className="p-6 text-emerald-700">Loading...</div>;
 
+  /** Human-readable file size formatting for attachments. */
   const formatBytes = (bytes: number) => {
     if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
     const units = ['B', 'KB', 'MB', 'GB'];
