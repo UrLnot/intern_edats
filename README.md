@@ -58,6 +58,14 @@ DB_USER=root
 DB_PASSWORD=
 DB_NAME=edats_db
 
+# Set these for hosted providers like Aiven when SSL/TLS is required
+DB_SSL=false
+DB_SSL_REJECT_UNAUTHORIZED=true
+
+# Optional: provide the CA certificate directly or point to a local file
+DB_SSL_CA=
+DB_SSL_CA_PATH=
+
 # Login (defaults to pmd_admin / pmd_admin if not set)
 EDATS_USERNAME=pmd_admin
 EDATS_PASSWORD=pmd_admin
@@ -65,6 +73,14 @@ EDATS_PASSWORD=pmd_admin
 # Session cookie token (defaults to "edats-internal-session" if not set)
 EDATS_SESSION_TOKEN=change-me
 ```
+
+Notes:
+
+- Copy `.env.example` to `.env.local` and fill in your real values.
+- This app uses `mysql2`, so your hosted database must be MySQL-compatible.
+- If your provider requires TLS, set `DB_SSL=true`.
+- For Aiven, use the service host, port, username, password, and database name from the service overview.
+- If Aiven provides a CA certificate, use `DB_SSL_CA` or `DB_SSL_CA_PATH`.
 
 ### 3) Create database tables
 
